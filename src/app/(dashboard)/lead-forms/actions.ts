@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { scoreLeadRule } from '@/lib/scoring'
 import { RATE_LIMITS } from '@/lib/rate-limit'
+import { emitLeadCreated } from '@/lib/automation/events'
 
 export async function getLeadForms() {
   const supabase = await createClient()
@@ -230,6 +231,15 @@ export async function convertSubmissionToLead(submissionId: string) {
       entity_type: 'lead',
       entity_id: lead.id,
       after_json: { source: 'web_form', submission_id: submissionId },
+    })
+
+    // Hand off to n8n for enrichment. Non-blocking; no-ops if unconfigured.
+    emitLeadCreated({
+      organizationId: orgId,
+      leadId: lead.id,
+      fullName: d.contact_name || null,
+      companyName: d.company_name || null,
+      website: d.website || null,
     })
 
     return { success: true, leadId: lead.id }

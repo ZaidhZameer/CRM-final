@@ -6,6 +6,7 @@ import { createServiceClient } from '@/lib/supabase/service'
 import { scoreLeadRule } from '@/lib/scoring'
 import { RATE_LIMITS } from '@/lib/rate-limit'
 import { sendImportCompleteEmail } from '@/lib/email'
+import { emitLeadCreated } from '@/lib/automation/events'
 
 const MAX_FILE_SIZE_FREE = 5 * 1024 * 1024 // 5MB
 const MAX_ROWS_FREE = 1000
@@ -571,6 +572,17 @@ async function processChunk(
       mapped_data_json: mapped,
       status: 'imported',
       created_lead_id: lead.id,
+    })
+
+    // Hand off to n8n for enrichment. Non-blocking; no-ops if unconfigured.
+    // NOTE: this fans out one POST per imported row. The adapter is expected to
+    // queue; if a large CSV ever overwhelms it, batch here rather than in n8n.
+    emitLeadCreated({
+      organizationId: orgId,
+      leadId: lead.id,
+      fullName: mapped.contact_name || null,
+      companyName: mapped.company_name || null,
+      website: mapped.website || null,
     })
 
     // Activity log

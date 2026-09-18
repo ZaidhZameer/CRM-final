@@ -7,6 +7,7 @@ import {
   createCalendarEvent,
 } from '@/lib/google-calendar'
 import { sendBookingNotificationEmail } from '@/lib/email'
+import { emitLeadCreated } from '@/lib/automation/events'
 
 export type BookingConfig = {
   orgId: string
@@ -324,6 +325,15 @@ export async function submitBooking(
           contact: formData.name,
           meeting_time: formData.slotStart,
         },
+      })
+
+      // Hand off to n8n for enrichment. Non-blocking; no-ops if unconfigured.
+      emitLeadCreated({
+        organizationId: orgId,
+        leadId: lead.id,
+        fullName: formData.name,
+        companyName: formData.company,
+        website: null,
       })
     }
 
