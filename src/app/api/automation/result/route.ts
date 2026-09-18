@@ -103,8 +103,18 @@ export async function POST(request: NextRequest) {
 
   if (claimError) {
     if (claimError.code === '23505') {
-      // Already seen. Idempotent success — do NOT write anything a second time.
-      return NextResponse.json({ ok: true, duplicate: true, event_id: body.event_id })
+      const { data: existingEvent } = await service
+        .from('automation_events')
+        .select('status')
+        .eq('event_id', body.event_id)
+        .single()
+
+      if (existingEvent?.status === 'completed') {
+        // Already seen. Idempotent success — do NOT write anything a second time.
+        return NextResponse.json({ ok: true, duplicate: true, event_id: body.event_id })
+      } else {
+        return fail(409, 'conflict', { reason: 'event exists but never completed - manual review or safe retry needed' })
+      }
     }
     console.error('[automation] failed to claim event', body.event_id, claimError.message)
     return fail(500, 'internal_error')
