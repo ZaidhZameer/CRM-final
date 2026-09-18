@@ -201,7 +201,8 @@ export async function POST(request: NextRequest) {
           .eq('organization_id', body.organization_id)
           .is('deleted_at', null)
           .eq('version', expectedVersion)
-          .not('status', 'in', `(${HUMAN_TERMINAL_STATUSES.join(',')})`)
+          // Quoted form matches the idiom already used in src/app/api/cron/stale-leads.
+          .not('status', 'in', `(${HUMAN_TERMINAL_STATUSES.map((s) => `"${s}"`).join(',')})`)
           .select('id, version')
 
         if (updateError) {
