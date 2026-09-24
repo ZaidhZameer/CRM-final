@@ -54,10 +54,21 @@ export default function ApprovalsPage() {
     return () => { active = false }
   }, [])
 
+  // Edits to a follow-up email before approving; sent as the RPC's edited payload.
+  const [edits, setEdits] = useState<Record<string, { subject: string; body: string }>>({})
+  const editFor = (a: ApprovalRow) => {
+    const p = (a.payload_json ?? {}) as { subject?: string; body?: string }
+    return edits[a.id] ?? { subject: p.subject ?? '', body: p.body ?? '' }
+  }
+
   async function handleDecision(id: string, decision: 'approved' | 'rejected', version: number) {
     setSubmitting(prev => ({ ...prev, [id]: true }))
     const note = notes[id] || undefined
-    const res = await decideApprovalAction(id, decision, version, note)
+    const approval = approvals.find((a) => a.id === id)
+    const original = (approval?.payload_json ?? {}) as { subject?: string; body?: string }
+    const edit = edits[id]
+    const changed = edit && (edit.subject !== (original.subject ?? '') || edit.body !== (original.body ?? ''))
+    const res = await decideApprovalAction(id, decision, version, note, changed ? { ...original, ...edit } : undefined)
     setSubmitting(prev => ({ ...prev, [id]: false }))
 
     if (res.error) {
@@ -132,7 +143,29 @@ export default function ApprovalsPage() {
                         {approval.summary}
                       </p>
                     )}
-                    {approval.payload_json && Object.keys(approval.payload_json).length > 0 && (
+                    {approval.action_type === 'send_follow_up_email' && isPending && (
+                      <div className="mt-3 max-w-3xl space-y-2 rounded-md border bg-muted/30 p-3">
+                        <p className="text-xs text-muted-foreground">
+                          To: <span className="font-medium text-foreground">{String((approval.payload_json as { to?: string } | null)?.to ?? '')}</span>
+                          <span className="ml-2">Edit freely; approving sends your version at the scheduled time.</span>
+                        </p>
+                        <Input
+                          aria-label="Email subject"
+                          className="h-9 text-sm"
+                          value={editFor(approval).subject}
+                          onChange={(e) => setEdits((prev) => ({ ...prev, [approval.id]: { ...editFor(approval), subject: e.target.value } }))}
+                          disabled={submitting[approval.id]}
+                        />
+                        <textarea
+                          aria-label="Email body"
+                          className="min-h-48 w-full rounded-md border bg-background p-3 text-sm leading-relaxed"
+                          value={editFor(approval).body}
+                          onChange={(e) => setEdits((prev) => ({ ...prev, [approval.id]: { ...editFor(approval), body: e.target.value } }))}
+                          disabled={submitting[approval.id]}
+                        />
+                      </div>
+                    )}
+                    {approval.action_type !== 'send_follow_up_email' && approval.payload_json && Object.keys(approval.payload_json).length > 0 && (
                       <details className="mt-2 max-w-3xl" open={isPending}>
                         <summary className="cursor-pointer text-xs font-medium text-muted-foreground">
                           What will happen if approved

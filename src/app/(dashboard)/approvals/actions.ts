@@ -60,7 +60,8 @@ export async function decideApprovalAction(
   approvalId: string,
   decision: 'approved' | 'rejected',
   expectedVersion: number,
-  note?: string
+  note?: string,
+  editedPayload?: Record<string, unknown>
 ) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -71,7 +72,7 @@ export async function decideApprovalAction(
     p_decision: decision,
     p_expected_version: expectedVersion,
     p_note: note || null,
-    p_edited_payload: null
+    p_edited_payload: decision === 'approved' && editedPayload ? editedPayload : null
   })
 
   if (error) {
