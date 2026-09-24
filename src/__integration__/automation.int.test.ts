@@ -7,6 +7,7 @@ import { readFileSync } from 'node:fs'
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { findOpenLeadIdByEmail } from '@/lib/leads'
 import { queueApprovedFollowUp, closeRejectedFollowUp, sendDueFollowUps } from '@/lib/follow-up-sender'
+import { applyReply } from '@/lib/reply-watcher'
 
 const enabled = process.env.FLOWLEAD_INTEGRATION === '1'
 // Minimal .env.local reader (KEY=value, optional quotes); values are never logged.
@@ -60,7 +61,7 @@ describe.skipIf(!enabled)('automation integration (local stack)', () => {
 
   afterAll(async () => {
     if (!orgId) return
-    for (const t of ['mail_connections', 'approvals', 'outreach_messages', 'jobs', 'follow_ups', 'research_reports', 'ai_usage_log', 'automation_events', 'activity_logs', 'leads', 'contacts', 'companies']) {
+    for (const t of ['tasks', 'mail_connections', 'approvals', 'outreach_messages', 'jobs', 'follow_ups', 'research_reports', 'ai_usage_log', 'automation_events', 'activity_logs', 'leads', 'contacts', 'companies']) {
       await db.from(t).delete().eq('organization_id', orgId)
     }
     await db.from('memberships').delete().eq('organization_id', orgId)
@@ -224,6 +225,50 @@ describe.skipIf(!enabled)('automation integration (local stack)', () => {
     expect(msg!.status).toBe('failed') // blocked before Gmail was ever called
     expect(msg!.gmail_message_id).toBeNull()
     await db.from('mail_connections').delete().eq('organization_id', orgId)
+  })
+
+  // ---- replies ------------------------------------------------------------------
+  const sentThread = async () => {
+    const { leadId, fu } = await pendingFollowUp()
+    const threadId = `th-${randomUUID()}`
+    await db.from('outreach_messages').insert({ organization_id: orgId, lead_id: leadId, channel: 'email', status: 'sent', source: 'user', body: 'Hi', subject: 'Hello', sent_at: new Date().toISOString(), gmail_message_id: `gm-${randomUUID()}`, gmail_thread_id: threadId })
+    return { leadId, fuId: fu.id, threadId }
+  }
+  const reply = (threadId: string, extra: Partial<{ snippet: string; subject: string; autoSubmitted: string }> = {}) => ({
+    gmailMessageId: `in-${randomUUID()}`, threadId, from: 'Dana <dana@draftco.test>', subject: 'Re: Hello', snippet: 'Sounds good, Thursday?', autoSubmitted: null, ...extra,
+  })
+
+  it('a real reply stops the sequence and creates an urgent task, once', async () => {
+    const { leadId, fuId, threadId } = await sentThread()
+    const r = reply(threadId)
+    expect(await applyReply(db, { organization_id: orgId }, r)).toBe('applied')
+    expect(await applyReply(db, { organization_id: orgId }, r)).toBe('duplicate')
+
+    const { data: fu } = await db.from('follow_ups').select('status, reason').eq('id', fuId).single()
+    expect(fu).toMatchObject({ status: 'skipped', reason: 'Lead replied' })
+    const { data: tasks } = await db.from('tasks').select('priority, title').eq('lead_id', leadId)
+    expect(tasks).toHaveLength(1)
+    expect(tasks![0].priority).toBe('high')
+  })
+
+  it('"stop" turns on do-not-contact', async () => {
+    const { leadId, threadId } = await sentThread()
+    await applyReply(db, { organization_id: orgId }, reply(threadId, { snippet: 'Please stop emailing me' }))
+    const { data: lead } = await db.from('leads').select('do_not_contact').eq('id', leadId).single()
+    expect(lead!.do_not_contact).toBe(true)
+  })
+
+  it('an out-of-office pushes the next step back instead of ending the sequence', async () => {
+    const { fuId, threadId } = await sentThread()
+    const { data: before } = await db.from('follow_ups').select('scheduled_for').eq('id', fuId).single()
+    await applyReply(db, { organization_id: orgId }, reply(threadId, { subject: 'Automatic reply: Hello', snippet: 'I am away' }))
+    const { data: after } = await db.from('follow_ups').select('status, scheduled_for').eq('id', fuId).single()
+    expect(after!.status).toBe('pending')
+    expect(new Date(after!.scheduled_for).getTime()).toBeGreaterThan(new Date(before!.scheduled_for).getTime())
+  })
+
+  it('mail in threads FlowLead did not start is ignored', async () => {
+    expect(await applyReply(db, { organization_id: orgId }, reply(`th-unknown-${randomUUID()}`))).toBe('not_ours')
   })
 
   it('findOpenLeadIdByEmail returns the open lead and ignores lost or deleted ones', async () => {

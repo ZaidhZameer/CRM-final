@@ -3,13 +3,15 @@ import { createServiceClient } from '@/lib/supabase/service'
 import { verifyCronSecret } from '@/lib/automation/secret'
 import { requestDueFollowUpDrafts } from '@/lib/automation/follow-up-drafts'
 import { sendDueFollowUps } from '@/lib/follow-up-sender'
+import { watchReplies } from '@/lib/reply-watcher'
 
 // Called every 15 minutes by the n8n lifecycle scheduler.
 // GET /api/cron/lifecycle   (header: x-cron-secret)
 //   1. Jobs the engine never answered are closed as failed, so nothing sits "running" forever.
 //   2. Meetings that ended but were never given an outcome get one reminder task for the rep.
 //   3. Automated follow-ups due within a day are sent to the engine for drafting.
-//   4. Approved follow-ups are sent from the connected mailbox at their scheduled time.
+//   4. Replies to follow-ups are picked up from the mailbox (they stop the sequence).
+//   5. Approved follow-ups are sent from the connected mailbox at their scheduled time.
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -98,7 +100,13 @@ export async function GET(request: NextRequest) {
     return { requested: 0, skipped: ['error'] }
   })
 
-  // ---- 4. Send approved follow-ups whose time has come ---------------------------
+  // ---- 4. Replies first, so a reply that just arrived stops a send in this run --
+  const replies = await watchReplies(service).catch((err) => {
+    console.error('[cron/lifecycle] reply check failed', err instanceof Error ? err.message : err)
+    return null
+  })
+
+  // ---- 5. Send approved follow-ups whose time has come ---------------------------
   const sending = await sendDueFollowUps(service).catch((err) => {
     console.error('[cron/lifecycle] follow-up sending failed', err instanceof Error ? err.message : err)
     return null
@@ -106,6 +114,7 @@ export async function GET(request: NextRequest) {
 
   return NextResponse.json({
     ok: !jobsError && !meetingsError,
+    follow_up_replies: replies,
     follow_ups_sending: sending,
     follow_up_drafts_requested: drafts.requested,
     follow_up_drafts_skipped: drafts.skipped.length,
