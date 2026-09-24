@@ -24,6 +24,7 @@ export async function GET(request: NextRequest) {
   const service = createServiceClient()
 
   // ---- 1. Stale jobs ----------------------------------------------------------
+  const cutoff = minutesAgo(JOB_TIMEOUT_MINUTES)
   const { data: staleJobs, error: jobsError } = await service
     .from('jobs')
     .update({
@@ -31,8 +32,12 @@ export async function GET(request: NextRequest) {
       finished_at: new Date().toISOString(),
       error_message: `no result from the engine within ${JOB_TIMEOUT_MINUTES} minutes`,
     })
-    .in('status', ['queued', 'running'])
-    .lt('created_at', minutesAgo(JOB_TIMEOUT_MINUTES))
+    // Queued jobs age from creation, running jobs from when they actually started.
+    .or(
+      `and(status.eq.queued,created_at.lt.${cutoff}),` +
+        `and(status.eq.running,started_at.lt.${cutoff}),` +
+        `and(status.eq.running,started_at.is.null,created_at.lt.${cutoff})`
+    )
     .select('id')
 
   if (jobsError) console.error('[cron/lifecycle] stale job sweep failed', jobsError.message)
@@ -53,12 +58,15 @@ export async function GET(request: NextRequest) {
     const title = `Log meeting outcome: ${m.title}`.slice(0, 200)
 
     // One prompt per meeting: skip if an open or finished prompt already exists.
-    const { count } = await service
+    let existing = service
       .from('tasks')
       .select('id', { count: 'exact', head: true })
       .eq('organization_id', m.organization_id)
       .eq('title', title)
       .gte('created_at', m.end_time)
+    // .eq() never matches NULL, so meetings without a lead need .is() or the dedupe fails open.
+    existing = m.lead_id ? existing.eq('lead_id', m.lead_id) : existing.is('lead_id', null)
+    const { count } = await existing
 
     if (count && count > 0) continue
 

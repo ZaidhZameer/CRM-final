@@ -89,6 +89,7 @@ export async function POST(request: NextRequest) {
         .from('automation_events')
         .select('status')
         .eq('event_id', body.event_id)
+        .eq('organization_id', body.organization_id)
         .single()
 
       if (existingEvent?.status === 'completed') {
