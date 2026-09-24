@@ -3,6 +3,7 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
+import { queueApprovedFollowUp, closeRejectedFollowUp } from '@/lib/follow-up-sender'
 import { revalidatePath } from 'next/cache'
 
 export type ApprovalRow = {
@@ -87,6 +88,12 @@ export async function decideApprovalAction(
     }
     return { error: message }
   }
+
+  // Side effects of the decision. Approving a follow-up only queues it: the lifecycle cron
+  // sends it at its scheduled time from the connected mailbox.
+  const service = createServiceClient()
+  if (decision === 'approved') await queueApprovedFollowUp(service, approvalId)
+  else await closeRejectedFollowUp(service, approvalId)
 
   revalidatePath('/approvals')
   return { success: true }

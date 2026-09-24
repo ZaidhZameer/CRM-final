@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { findOpenLeadIdByEmail } from '@/lib/leads'
+import { queueApprovedFollowUp, closeRejectedFollowUp, sendDueFollowUps } from '@/lib/follow-up-sender'
 
 const enabled = process.env.FLOWLEAD_INTEGRATION === '1'
 // Minimal .env.local reader (KEY=value, optional quotes); values are never logged.
@@ -59,7 +60,7 @@ describe.skipIf(!enabled)('automation integration (local stack)', () => {
 
   afterAll(async () => {
     if (!orgId) return
-    for (const t of ['approvals', 'outreach_messages', 'jobs', 'follow_ups', 'research_reports', 'ai_usage_log', 'automation_events', 'activity_logs', 'leads', 'contacts', 'companies']) {
+    for (const t of ['mail_connections', 'approvals', 'outreach_messages', 'jobs', 'follow_ups', 'research_reports', 'ai_usage_log', 'automation_events', 'activity_logs', 'leads', 'contacts', 'companies']) {
       await db.from(t).delete().eq('organization_id', orgId)
     }
     await db.from('memberships').delete().eq('organization_id', orgId)
@@ -179,6 +180,50 @@ describe.skipIf(!enabled)('automation integration (local stack)', () => {
     expect(['ignored', 'blocked']).toContain(json.outcome)
     const { count } = await db.from('outreach_messages').select('id', { count: 'exact', head: true }).eq('lead_id', leadId)
     expect(count).toBe(0)
+  })
+
+  // ---- approve -> queue -> send (up to the Gmail call) ---------------------------
+  const WEDNESDAY_10AM = new Date('2026-01-14T10:00:00Z')
+  const approvedDraft = async (decision: 'approved' | 'rejected') => {
+    const { leadId, fu } = await pendingFollowUp()
+    await db.from('follow_ups').update({ scheduled_for: '2026-01-14T09:30:00Z' }).eq('id', fu.id)
+    await postDrafted(fu.id, { decision: 'send', reason: 'r', subject: 'Hello', body: 'Hi' })
+    const { data: appr } = await db.from('approvals').select('id').eq('organization_id', orgId).eq('subject_id', leadId).single()
+    await db.from('approvals').update({ status: decision, decided_at: new Date().toISOString() }).eq('id', appr!.id) // what decide_approval does
+    if (decision === 'approved') await queueApprovedFollowUp(db, appr!.id)
+    else await closeRejectedFollowUp(db, appr!.id)
+    return { leadId, fuId: fu.id }
+  }
+
+  it('approving queues the email; with no mailbox connected it waits instead of failing', async () => {
+    const { leadId } = await approvedDraft('approved')
+    const { data: msg } = await db.from('outreach_messages').select('status').eq('lead_id', leadId).single()
+    expect(msg!.status).toBe('queued')
+    const res = await sendDueFollowUps(db, WEDNESDAY_10AM)
+    expect(res.waiting_for_mailbox).toBeGreaterThanOrEqual(1)
+    const { data: still } = await db.from('outreach_messages').select('status').eq('lead_id', leadId).single()
+    expect(still!.status).toBe('queued')
+  })
+
+  it('nothing is sent outside UK business hours', async () => {
+    expect((await sendDueFollowUps(db, new Date('2026-01-17T10:00:00Z'))).outside_window).toBe(true) // Saturday
+  })
+
+  it('rejecting closes the step so the sequence stops', async () => {
+    const { fuId } = await approvedDraft('rejected')
+    const { data: fu } = await db.from('follow_ups').select('status, decided_by').eq('id', fuId).single()
+    expect(fu).toMatchObject({ status: 'skipped', decided_by: 'human' })
+  })
+
+  it('a lead marked do-not-contact after approval is never sent to', async () => {
+    const { leadId } = await approvedDraft('approved')
+    await db.from('mail_connections').insert({ organization_id: orgId, profile_id: (await db.from('profiles').select('id').eq('user_id', userId).single()).data!.id, email: 'me@test.dev', access_token: 'fake', token_expires_at: new Date(Date.now() + 3600_000).toISOString() })
+    await db.from('leads').update({ do_not_contact: true }).eq('id', leadId)
+    await sendDueFollowUps(db, WEDNESDAY_10AM)
+    const { data: msg } = await db.from('outreach_messages').select('status, sent_at, gmail_message_id').eq('lead_id', leadId).single()
+    expect(msg!.status).toBe('failed') // blocked before Gmail was ever called
+    expect(msg!.gmail_message_id).toBeNull()
+    await db.from('mail_connections').delete().eq('organization_id', orgId)
   })
 
   it('findOpenLeadIdByEmail returns the open lead and ignores lost or deleted ones', async () => {
