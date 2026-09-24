@@ -2,6 +2,7 @@
 
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
+import { createServiceClient } from '@/lib/supabase/service'
 import { revalidatePath } from 'next/cache'
 
 export type ApprovalRow = {
@@ -23,7 +24,9 @@ export async function getApprovals(): Promise<{ approvals: ApprovalRow[] }> {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/sign-in')
 
-  const { data: profile } = await supabase
+  // Profile lookup goes through the service client like the rest of the app: the
+  // profiles_select RLS policy is self-referential and errors for the user client.
+  const { data: profile } = await createServiceClient()
     .from('profiles')
     .select('id, default_organization_id')
     .eq('user_id', user.id)
