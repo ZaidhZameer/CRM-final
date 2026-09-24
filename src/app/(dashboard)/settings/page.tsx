@@ -1,12 +1,13 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { getOrgSettings, updateOrgName, updateProfile } from './actions'
 import Link from 'next/link'
 import { User, Building2, Users, ChevronRight, FileText, Shield, Trash2, ScrollText } from 'lucide-react'
 import { BookingSettings } from './booking-settings'
+import { MailboxSettings } from './mailbox-settings'
 
 const ROLE_STYLES: Record<string, string> = {
   owner: 'bg-purple-50 text-purple-600 ring-purple-500/20 dark:bg-purple-950/40 dark:text-purple-400',
@@ -161,6 +162,11 @@ export default function SettingsPage() {
 
       {/* Booking Page */}
       <BookingSettings />
+
+      {/* Follow-up mailbox (Gmail) */}
+      <Suspense fallback={null}>
+        <MailboxSettings />
+      </Suspense>
 
       {/* Team Members */}
       <div className="rounded-xl border bg-card p-6 space-y-4">
