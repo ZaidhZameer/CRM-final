@@ -1,14 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { sendTaskReminderEmail } from '@/lib/email'
+import { verifyCronSecret } from '@/lib/automation/secret'
 
-// This endpoint is called by a cron job (e.g., Vercel Cron) once a day at 8:00 AM
-// GET /api/cron/task-reminders?key=CRON_SECRET
+// Called once a day by the n8n lifecycle scheduler.
+// GET /api/cron/task-reminders   (header: x-cron-secret)
 
 export async function GET(request: NextRequest) {
-  // Verify cron secret to prevent unauthorized access
-  const cronSecret = request.nextUrl.searchParams.get('key')
-  if (cronSecret !== process.env.CRON_SECRET && process.env.CRON_SECRET) {
+  if (!verifyCronSecret(request).ok) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
@@ -29,7 +28,7 @@ export async function GET(request: NextRequest) {
     `)
     .gte('due_date', startOfDay)
     .lt('due_date', endOfDay)
-    .in('status', ['pending', 'in_progress'])
+    .in('status', ['todo', 'in_progress'])
 
   if (!tasks || tasks.length === 0) {
     return NextResponse.json({ message: 'No tasks due today', sent: 0 })

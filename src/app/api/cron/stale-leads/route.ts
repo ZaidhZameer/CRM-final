@@ -1,13 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/service'
-import { sendTaskReminderEmail } from '@/lib/email'
+import { verifyCronSecret } from '@/lib/automation/secret'
 
 // Cron: Runs daily. Finds leads with no activity for 7+ days and auto-creates follow-up tasks.
-// GET /api/cron/stale-leads?key=CRON_SECRET
+// GET /api/cron/stale-leads   (header: x-cron-secret)
 
 export async function GET(request: NextRequest) {
-  const cronSecret = request.nextUrl.searchParams.get('key')
-  if (cronSecret !== process.env.CRON_SECRET && process.env.CRON_SECRET) {
+  if (!verifyCronSecret(request).ok) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
@@ -43,7 +42,7 @@ export async function GET(request: NextRequest) {
       .from('tasks')
       .select('id', { count: 'exact', head: true })
       .eq('lead_id', lead.id)
-      .in('status', ['pending', 'in_progress'])
+      .in('status', ['todo', 'in_progress'])
 
     if (count && count > 0) continue // already has an open task
 
@@ -59,7 +58,7 @@ export async function GET(request: NextRequest) {
         title: `Follow up: ${companyName}${contactName ? ` (${contactName})` : ''}`,
         description: `This lead has had no activity for ${daysSince} days. Consider reaching out to re-engage.`,
         priority: daysSince > 14 ? 'high' : 'medium',
-        status: 'pending',
+        status: 'todo',
         due_date: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), // due tomorrow
         lead_id: lead.id,
         assigned_to: lead.assigned_to ?? null,

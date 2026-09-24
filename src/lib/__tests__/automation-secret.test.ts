@@ -1,6 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import type { NextRequest } from 'next/server'
-import { verifyAutomationSecret, AUTOMATION_SECRET_HEADER } from '../automation/secret'
+import {
+  verifyAutomationSecret,
+  verifyCronSecret,
+  AUTOMATION_SECRET_HEADER,
+  CRON_SECRET_HEADER,
+} from '../automation/secret'
 import { buildLeadCreatedEvent } from '../automation/events'
 
 const VALID = 'a-sufficiently-long-secret-value'
@@ -85,5 +90,37 @@ describe('buildLeadCreatedEvent', () => {
     expect(b.full_name).toBeNull()
     expect(b.company_name).toBeNull()
     expect(b.website).toBeNull()
+  })
+})
+
+describe('verifyCronSecret', () => {
+  const original = process.env.CRON_SECRET
+  const cronReq = (headers: Record<string, string>) =>
+    ({ headers: new Headers(headers) }) as unknown as NextRequest
+
+  afterEach(() => {
+    if (original === undefined) delete process.env.CRON_SECRET
+    else process.env.CRON_SECRET = original
+  })
+
+  it('fails closed when CRON_SECRET is unset', () => {
+    delete process.env.CRON_SECRET
+    expect(verifyCronSecret(cronReq({ [CRON_SECRET_HEADER]: 'anything-at-all-here' }))).toEqual({
+      ok: false,
+      reason: 'not_configured',
+    })
+  })
+
+  it('accepts the secret in the header', () => {
+    process.env.CRON_SECRET = VALID
+    expect(verifyCronSecret(cronReq({ [CRON_SECRET_HEADER]: VALID }))).toEqual({ ok: true })
+  })
+
+  it('does not accept the automation header in place of the cron header', () => {
+    process.env.CRON_SECRET = VALID
+    expect(verifyCronSecret(cronReq({ [AUTOMATION_SECRET_HEADER]: VALID }))).toEqual({
+      ok: false,
+      reason: 'missing_header',
+    })
   })
 })

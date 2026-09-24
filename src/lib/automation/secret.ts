@@ -1,9 +1,8 @@
 import { timingSafeEqual } from 'node:crypto'
 import type { NextRequest } from 'next/server'
 
-// Shared-secret verification for the n8n automation integration.
+// Shared-secret verification for the n8n automation integration and cron routes.
 //
-// Deliberately different from the existing cron routes (`?key=` query param):
 //   1. Secret travels in a HEADER, not the URL — query strings leak into access logs,
 //      proxy logs, browser history and Referer headers.
 //   2. FAIL CLOSED — if AUTOMATION_SHARED_SECRET is unset or empty, every request is
@@ -29,15 +28,29 @@ function safeEqual(a: string, b: string): boolean {
   return timingSafeEqual(padA, padB) && bufA.length === bufB.length
 }
 
-export function verifyAutomationSecret(request: NextRequest): SecretCheck {
-  const expected = process.env.AUTOMATION_SHARED_SECRET
+function verifyHeaderSecret(
+  request: NextRequest,
+  header: string,
+  expected: string | undefined
+): SecretCheck {
   if (!expected || expected.length < 16) {
     // Unset, empty, or trivially short — treat the endpoint as disabled.
     return { ok: false, reason: 'not_configured' }
   }
 
-  const provided = request.headers.get(AUTOMATION_SECRET_HEADER)
+  const provided = request.headers.get(header)
   if (!provided) return { ok: false, reason: 'missing_header' }
 
   return safeEqual(provided, expected) ? { ok: true } : { ok: false, reason: 'mismatch' }
+}
+
+export function verifyAutomationSecret(request: NextRequest): SecretCheck {
+  return verifyHeaderSecret(request, AUTOMATION_SECRET_HEADER, process.env.AUTOMATION_SHARED_SECRET)
+}
+
+export const CRON_SECRET_HEADER = 'x-cron-secret'
+
+/** Same rules as the automation secret, for /api/cron/* (called by the n8n scheduler). */
+export function verifyCronSecret(request: NextRequest): SecretCheck {
+  return verifyHeaderSecret(request, CRON_SECRET_HEADER, process.env.CRON_SECRET)
 }
