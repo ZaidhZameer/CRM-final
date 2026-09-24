@@ -112,6 +112,24 @@ describe('leadEnrichedSchema', () => {
     const bad = { ...base, payload: { research: { lead_score: 140 } } }
     expect(leadEnrichedSchema.safeParse(bad).success).toBe(false)
   })
+
+  it('accepts per-call usage for the cost ledger', () => {
+    const withUsage = {
+      ...base,
+      payload: {
+        ...base.payload,
+        usage: [{ model: 'perplexity/sonar-pro', prompt_tokens: 175, completion_tokens: 365, cost_usd: 0.012, latency_ms: 6615 }],
+      },
+    }
+    expect(leadEnrichedSchema.safeParse(withUsage).success).toBe(true)
+  })
+
+  it('rejects usage without a model or with a negative cost', () => {
+    const noModel = { ...base, payload: { ...base.payload, usage: [{ cost_usd: 0.01 }] } }
+    const negative = { ...base, payload: { ...base.payload, usage: [{ model: 'x', cost_usd: -1 }] } }
+    expect(leadEnrichedSchema.safeParse(noModel).success).toBe(false)
+    expect(leadEnrichedSchema.safeParse(negative).success).toBe(false)
+  })
 })
 
 describe('verifyCronSecret', () => {

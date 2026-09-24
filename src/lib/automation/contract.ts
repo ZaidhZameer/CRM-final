@@ -44,6 +44,15 @@ export const researchSchema = z.object({
   error_message: z.string().max(2000).nullish(),
 })
 
+// One entry per paid model call, so every enrichment's cost lands in ai_usage_log.
+export const usageSchema = z.object({
+  model: z.string().max(200),
+  prompt_tokens: z.number().int().min(0).nullish(),
+  completion_tokens: z.number().int().min(0).nullish(),
+  cost_usd: z.number().min(0).max(100).nullish(),
+  latency_ms: z.number().int().min(0).nullish(),
+})
+
 export const leadEnrichedSchema = envelope.extend({
   event_type: z.literal('lead.enriched'),
   payload: z.object({
@@ -55,6 +64,7 @@ export const leadEnrichedSchema = envelope.extend({
         ai_status: z.enum(['pending', 'running', 'completed', 'failed']).optional(),
       })
       .optional(),
+    usage: z.array(usageSchema).max(20).optional(),
   }),
 })
 

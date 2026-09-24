@@ -167,6 +167,26 @@ export async function POST(request: NextRequest) {
       return fail(500, 'internal_error')
     }
 
+    // Cost ledger. Best effort: a failed usage insert must not fail the delivery.
+    const usage = body.payload.usage ?? []
+    if (usage.length > 0) {
+      const { error: usageError } = await service.from('ai_usage_log').insert(
+        usage.map((u) => ({
+          organization_id: lead.organization_id,
+          lead_id: lead.id,
+          model: u.model,
+          tier: r.tier,
+          prompt_tokens: u.prompt_tokens ?? 0,
+          completion_tokens: u.completion_tokens ?? 0,
+          // n8n only reports calls whose provider returned a cost, so 0 here means free, not unknown.
+          cost_usd_cents: Math.round((u.cost_usd ?? 0) * 100 * 10000) / 10000,
+          latency_ms: u.latency_ms ?? null,
+          status: r.status === 'failed' ? 'failed' : 'success',
+        }))
+      )
+      if (usageError) console.error('[automation] ai_usage_log insert failed', body.event_id, usageError.message)
+    }
+
     // ---- 6. Narrow guarded transition on the lead ----------------------------
     let outcome: Outcome = 'research_only'
 
