@@ -22,12 +22,12 @@ export async function GET(request: NextRequest) {
   const { data: tasks } = await service
     .from('tasks')
     .select(`
-      id, title, due_date, priority,
+      id, title, due_at, priority,
       assigned_to,
       profiles:assigned_to(full_name, user_id)
     `)
-    .gte('due_date', startOfDay)
-    .lt('due_date', endOfDay)
+    .gte('due_at', startOfDay)
+    .lt('due_at', endOfDay)
     .in('status', ['todo', 'in_progress'])
 
   if (!tasks || tasks.length === 0) {
@@ -56,7 +56,7 @@ export async function GET(request: NextRequest) {
 
     tasksByUser.get(userId)!.tasks.push({
       title: task.title,
-      dueDate: new Date(task.due_date).toLocaleDateString(),
+      dueDate: new Date(task.due_at).toLocaleDateString(),
       priority: task.priority,
     })
   }

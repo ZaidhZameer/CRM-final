@@ -59,7 +59,7 @@ export async function GET(request: NextRequest) {
         description: `This lead has had no activity for ${daysSince} days. Consider reaching out to re-engage.`,
         priority: daysSince > 14 ? 'high' : 'medium',
         status: 'todo',
-        due_date: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), // due tomorrow
+        due_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), // due tomorrow
         lead_id: lead.id,
         assigned_to: lead.assigned_to ?? null,
       })
