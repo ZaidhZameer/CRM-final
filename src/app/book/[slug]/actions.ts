@@ -7,7 +7,7 @@ import {
   createCalendarEvent,
 } from '@/lib/google-calendar'
 import { sendBookingNotificationEmail } from '@/lib/email'
-import { emitLeadCreated } from '@/lib/automation/events'
+import { requestLeadEnrichment } from '@/lib/automation/events'
 
 export type BookingConfig = {
   orgId: string
@@ -328,7 +328,7 @@ export async function submitBooking(
       })
 
       // Hand off to n8n for enrichment. Non-blocking; no-ops if unconfigured.
-      emitLeadCreated({
+      requestLeadEnrichment({
         organizationId: orgId,
         leadId: lead.id,
         fullName: formData.name,

@@ -5,7 +5,7 @@ import { createClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { scoreLeadRule } from '@/lib/scoring'
 import { RATE_LIMITS } from '@/lib/rate-limit'
-import { emitLeadCreated } from '@/lib/automation/events'
+import { requestLeadEnrichment } from '@/lib/automation/events'
 
 export async function getLeadForms() {
   const supabase = await createClient()
@@ -234,7 +234,7 @@ export async function convertSubmissionToLead(submissionId: string) {
     })
 
     // Hand off to n8n for enrichment. Non-blocking; no-ops if unconfigured.
-    emitLeadCreated({
+    requestLeadEnrichment({
       organizationId: orgId,
       leadId: lead.id,
       fullName: d.contact_name || null,

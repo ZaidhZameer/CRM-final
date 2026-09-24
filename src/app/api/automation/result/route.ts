@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { z } from 'zod/v4'
 import { createServiceClient } from '@/lib/supabase/service'
 import { verifyAutomationSecret } from '@/lib/automation/secret'
+import { leadEnrichedSchema } from '@/lib/automation/contract'
 
-// Inbound webhook: receives lead-enrichment results from the n8n adapter.
+// Inbound webhook: receives lead-enrichment results from the engine (contract: lead.enriched).
 // POST /api/automation/result
 //   Auth:  x-flowlead-secret header, compared timing-safely, FAILS CLOSED.
 //   Idempotency: event_id is claimed in public.automation_events (PK) before any write.
-//   Writes: one row in research_reports + a narrow, version-guarded update of leads.
+//   Writes: one row in research_reports + a narrow, version-guarded update of leads,
+//           and closes the job opened by the request (matched on correlation_id).
 //
 // This route never blind-UPDATEs a lead. It refuses to overwrite a lead a human has
 // already resolved (converted / lost / unqualified) and refuses on a version mismatch.
@@ -17,38 +18,6 @@ export const dynamic = 'force-dynamic'
 
 // Statuses a human has already decided. Enrichment must never resurrect these.
 const HUMAN_TERMINAL_STATUSES = ['converted', 'lost', 'unqualified'] as const
-
-const payloadSchema = z.object({
-  event_id: z.string().uuid(),
-  event_type: z.literal('lead.enriched'),
-  organization_id: z.string().uuid(),
-  lead_id: z.string().uuid(),
-  // Version the emitting side saw. When present it is enforced; when absent we use the
-  // version we just read (still guarded — a concurrent writer will lose the update).
-  expected_version: z.number().int().positive().optional(),
-  research: z.object({
-    tier: z.enum(['basic', 'standard', 'deep']).default('basic'),
-    status: z.enum(['pending', 'running', 'completed', 'failed']).default('completed'),
-    company_summary: z.string().max(20000).nullish(),
-    website_analysis: z.string().max(20000).nullish(),
-    pain_points: z.array(z.string().max(2000)).max(50).nullish(),
-    recommended_offer: z.string().max(5000).nullish(),
-    outreach_angle: z.string().max(5000).nullish(),
-    objections: z.array(z.string().max(2000)).max(50).nullish(),
-    next_best_action: z.string().max(5000).nullish(),
-    lead_score: z.number().int().min(0).max(100).nullish(),
-    confidence_score: z.number().min(0).max(1).nullish(),
-    model: z.string().max(200).nullish(),
-    error_message: z.string().max(2000).nullish(),
-  }),
-  lead_update: z
-    .object({
-      lead_score: z.number().int().min(0).max(100).optional(),
-      lead_quality: z.enum(['hot', 'warm', 'cold']).optional(),
-      ai_status: z.enum(['pending', 'running', 'completed', 'failed']).optional(),
-    })
-    .optional(),
-})
 
 type Outcome =
   | 'applied'
@@ -80,22 +49,35 @@ export async function POST(request: NextRequest) {
     return fail(400, 'invalid_json')
   }
 
-  const parsed = payloadSchema.safeParse(raw)
+  const parsed = leadEnrichedSchema.safeParse(raw)
   if (!parsed.success) {
     return fail(400, 'invalid_payload', {
       issues: parsed.error.issues.map((i) => ({ path: i.path.join('.'), message: i.message })),
     })
   }
   const body = parsed.data
+  const leadId = body.subject_id
 
   const service = createServiceClient()
+
+  // Close the job the request opened. Org-scoped; a reply without a correlation_id
+  // (or for a job we never recorded) simply matches nothing.
+  const closeJob = async (patch: Record<string, unknown>) => {
+    if (!body.correlation_id) return
+    const { error } = await service
+      .from('jobs')
+      .update({ finished_at: new Date().toISOString(), ...patch })
+      .eq('event_id', body.correlation_id)
+      .eq('organization_id', body.organization_id)
+    if (error) console.error('[automation] job close failed', body.event_id, error.message)
+  }
 
   // ---- 3. Claim the event (idempotency) --------------------------------------
   // Insert-first: a duplicate delivery hits the primary key and is answered as a no-op.
   const { error: claimError } = await service.from('automation_events').insert({
     event_id: body.event_id,
     organization_id: body.organization_id,
-    lead_id: body.lead_id,
+    lead_id: leadId,
     direction: 'inbound',
     event_type: body.event_type,
     status: 'processing',
@@ -125,6 +107,7 @@ export async function POST(request: NextRequest) {
       .from('automation_events')
       .update({ status: 'failed', error_message: reason })
       .eq('event_id', body.event_id)
+    await closeJob({ status: 'failed', error_message: `result not applied: ${reason}` })
   }
 
   try {
@@ -134,7 +117,7 @@ export async function POST(request: NextRequest) {
     const { data: lead, error: leadError } = await service
       .from('leads')
       .select('id, organization_id, status, version, lead_score, lead_quality, ai_status')
-      .eq('id', body.lead_id)
+      .eq('id', leadId)
       .eq('organization_id', body.organization_id)
       .is('deleted_at', null)
       .maybeSingle()
@@ -153,7 +136,8 @@ export async function POST(request: NextRequest) {
     // ---- 5. Write the research report ----------------------------------------
     // NOTE: the columns are `tier` and `status` (types public.research_tier /
     // public.research_status), not `research_tier` / `research_status`.
-    const r = body.research
+    const r = body.payload.research
+    const leadUpdate = body.payload.lead_update
     const { data: report, error: reportError } = await service
       .from('research_reports')
       .insert({
@@ -186,7 +170,7 @@ export async function POST(request: NextRequest) {
     let outcome: Outcome = 'research_only'
 
     const wantsLeadUpdate =
-      body.lead_update !== undefined || r.lead_score != null || r.status === 'failed'
+      leadUpdate !== undefined || r.lead_score != null || r.status === 'failed'
 
     if (wantsLeadUpdate) {
       if ((HUMAN_TERMINAL_STATUSES as readonly string[]).includes(lead.status)) {
@@ -197,12 +181,12 @@ export async function POST(request: NextRequest) {
 
         const patch: Record<string, unknown> = {
           ai_status:
-            body.lead_update?.ai_status ?? (r.status === 'failed' ? 'failed' : 'completed'),
+            leadUpdate?.ai_status ?? (r.status === 'failed' ? 'failed' : 'completed'),
           version: expectedVersion + 1,
         }
-        if (body.lead_update?.lead_score != null) patch.lead_score = body.lead_update.lead_score
+        if (leadUpdate?.lead_score != null) patch.lead_score = leadUpdate.lead_score
         else if (r.lead_score != null) patch.lead_score = r.lead_score
-        if (body.lead_update?.lead_quality) patch.lead_quality = body.lead_update.lead_quality
+        if (leadUpdate?.lead_quality) patch.lead_quality = leadUpdate.lead_quality
 
         const { data: updated, error: updateError } = await service
           .from('leads')
@@ -246,6 +230,13 @@ export async function POST(request: NextRequest) {
         result_json: { outcome, research_report_id: report.id },
       })
       .eq('event_id', body.event_id)
+
+    // The engine reports research failure inside a well-formed result; the job mirrors it.
+    await closeJob(
+      r.status === 'failed'
+        ? { status: 'failed', error_message: r.error_message ?? 'research failed', result_json: { outcome, research_report_id: report.id } }
+        : { status: 'done', result_json: { outcome, research_report_id: report.id } }
+    )
 
     return NextResponse.json({
       ok: true,

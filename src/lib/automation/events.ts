@@ -1,26 +1,19 @@
 import { randomUUID } from 'node:crypto'
 import { after } from 'next/server'
 import { AUTOMATION_SECRET_HEADER } from './secret'
+import { createServiceClient } from '@/lib/supabase/service'
+import type { LeadEnrichmentRequested } from './contract'
 
-// Outbound side of the n8n integration: emit `lead.created` to the n8n FlowLead adapter.
+// Outbound side of the automation contract: ask the engine to research a lead.
 //
 // Design constraints (non-negotiable):
 //   - Lead creation MUST succeed even if n8n is unreachable, slow, or misconfigured.
 //   - If N8N_ADAPTER_URL or AUTOMATION_SHARED_SECRET is unset, this no-ops and logs.
-//   - Never blocks the user's request path: the POST is scheduled with `after()` so it
-//     runs once the response has been sent, and any failure is swallowed after logging.
+//   - Never blocks the user's request path: work is scheduled with `after()`.
+//   - Every request is recorded as a job, so failures are visible in the app,
+//     not only in server logs. The engine's reply (lead.enriched) closes the job.
 
-export type LeadCreatedEvent = {
-  event_id: string
-  event_type: 'lead.created'
-  organization_id: string
-  lead_id: string
-  full_name: string | null
-  company_name: string | null
-  website: string | null
-}
-
-export type LeadCreatedInput = {
+export type LeadEnrichmentInput = {
   organizationId: string
   leadId: string
   fullName?: string | null
@@ -29,83 +22,106 @@ export type LeadCreatedInput = {
 }
 
 const EMIT_TIMEOUT_MS = 8000
+const JOB_TYPE = 'lead.enrichment'
 
-function logSkip(reason: string, leadId: string) {
-  console.warn(`[automation] lead.created not emitted (${reason}) lead_id=${leadId}`)
-}
-
-/** Build the wire payload. Exported for tests and for the OpenAPI contract to mirror. */
-export function buildLeadCreatedEvent(input: LeadCreatedInput): LeadCreatedEvent {
+/** Build the wire payload (contract: lead.enrichment.requested). */
+export function buildLeadEnrichmentRequest(input: LeadEnrichmentInput): LeadEnrichmentRequested {
   return {
     event_id: randomUUID(),
-    event_type: 'lead.created',
+    event_type: 'lead.enrichment.requested',
     organization_id: input.organizationId,
-    lead_id: input.leadId,
-    full_name: input.fullName ?? null,
-    company_name: input.companyName ?? null,
-    website: input.website ?? null,
+    subject_id: input.leadId,
+    payload: {
+      full_name: input.fullName ?? null,
+      company_name: input.companyName ?? null,
+      website: input.website ?? null,
+    },
   }
 }
 
-async function post(event: LeadCreatedEvent, url: string, secret: string): Promise<void> {
+async function send(event: LeadEnrichmentRequested, url: string, secret: string): Promise<void> {
+  const service = createServiceClient()
+  const jobKey = { event_id: event.event_id, organization_id: event.organization_id }
+
+  const { error: jobError } = await service.from('jobs').insert({
+    ...jobKey,
+    job_type: JOB_TYPE,
+    subject_type: 'lead',
+    subject_id: event.subject_id,
+    status: 'queued',
+  })
+  if (jobError) {
+    // Still attempt the send: the job row is visibility, not a precondition.
+    console.error(`[automation] could not record job event_id=${event.event_id}: ${jobError.message}`)
+  }
+
+  const markJob = async (patch: Record<string, unknown>) => {
+    if (jobError) return
+    const { error } = await service.from('jobs').update(patch).match(jobKey)
+    if (error) console.error(`[automation] job update failed event_id=${event.event_id}: ${error.message}`)
+  }
+
   try {
     const res = await fetch(url, {
       method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        [AUTOMATION_SECRET_HEADER]: secret,
-      },
+      headers: { 'content-type': 'application/json', [AUTOMATION_SECRET_HEADER]: secret },
       body: JSON.stringify(event),
       signal: AbortSignal.timeout(EMIT_TIMEOUT_MS),
       cache: 'no-store',
     })
 
-    if (!res.ok) {
-      console.error(
-        `[automation] lead.created rejected by adapter status=${res.status} ` +
-          `event_id=${event.event_id} lead_id=${event.lead_id}`
-      )
+    if (res.ok) {
+      await markJob({ status: 'running', started_at: new Date().toISOString(), attempts: 1 })
+    } else {
+      console.error(`[automation] enrichment request rejected status=${res.status} event_id=${event.event_id}`)
+      await markJob({
+        status: 'failed',
+        attempts: 1,
+        finished_at: new Date().toISOString(),
+        error_message: `engine rejected request (HTTP ${res.status})`,
+      })
     }
   } catch (err) {
     // Network error, DNS failure, timeout. The lead already exists — this is not fatal.
     const message = err instanceof Error ? err.message : 'unknown error'
-    console.error(
-      `[automation] lead.created emit failed: ${message} ` +
-        `event_id=${event.event_id} lead_id=${event.lead_id}`
-    )
+    console.error(`[automation] enrichment request failed: ${message} event_id=${event.event_id}`)
+    await markJob({
+      status: 'failed',
+      attempts: 1,
+      finished_at: new Date().toISOString(),
+      error_message: `could not reach engine: ${message}`,
+    })
   }
 }
 
 /**
- * Fire-and-forget emit of `lead.created` to the n8n adapter.
+ * Fire-and-forget request to research a newly created lead.
  *
  * Safe to call from any server action or route handler. Never throws, never rejects,
- * never blocks the response. Returns the event_id when an emit was scheduled, or null
- * when the integration is not configured.
+ * never blocks the response. Returns the event_id when a request was scheduled, or
+ * null when the integration is not configured.
  */
-export function emitLeadCreated(input: LeadCreatedInput): string | null {
+export function requestLeadEnrichment(input: LeadEnrichmentInput): string | null {
   const url = process.env.N8N_ADAPTER_URL
   const secret = process.env.AUTOMATION_SHARED_SECRET
 
-  if (!url) {
-    logSkip('N8N_ADAPTER_URL is not set', input.leadId)
-    return null
-  }
-  if (!secret) {
-    logSkip('AUTOMATION_SHARED_SECRET is not set', input.leadId)
+  if (!url || !secret) {
+    const missing = !url ? 'N8N_ADAPTER_URL' : 'AUTOMATION_SHARED_SECRET'
+    console.warn(`[automation] enrichment not requested (${missing} is not set) lead_id=${input.leadId}`)
     return null
   }
 
-  const event = buildLeadCreatedEvent(input)
+  const event = buildLeadEnrichmentRequest(input)
+  const run = () => send(event, url, secret).catch((err) => {
+    console.error(`[automation] enrichment send crashed event_id=${event.event_id}`, err)
+  })
 
   try {
-    // `after()` runs the callback once the response has flushed, and keeps the
-    // serverless invocation alive long enough for it to finish.
-    after(() => post(event, url, secret))
+    // `after()` runs once the response has flushed and keeps the invocation alive.
+    after(run)
   } catch {
     // Outside a request scope (e.g. a script or a test) `after()` throws.
-    // Fall back to a floating promise rather than failing the caller.
-    void post(event, url, secret)
+    void run()
   }
 
   return event.event_id

@@ -6,7 +6,8 @@ import {
   AUTOMATION_SECRET_HEADER,
   CRON_SECRET_HEADER,
 } from '../automation/secret'
-import { buildLeadCreatedEvent } from '../automation/events'
+import { buildLeadEnrichmentRequest } from '../automation/events'
+import { leadEnrichmentRequestedSchema, leadEnrichedSchema } from '../automation/contract'
 
 const VALID = 'a-sufficiently-long-secret-value'
 
@@ -67,9 +68,9 @@ describe('verifyAutomationSecret', () => {
   })
 })
 
-describe('buildLeadCreatedEvent', () => {
-  it('produces the documented wire shape with a fresh event_id', () => {
-    const a = buildLeadCreatedEvent({
+describe('buildLeadEnrichmentRequest', () => {
+  it('produces a valid lead.enrichment.requested envelope with a fresh event_id', () => {
+    const a = buildLeadEnrichmentRequest({
       organizationId: '0b5c1f9a-2f3e-4c1a-9f10-6d2b7e4a8c31',
       leadId: '8f2a7c44-91b2-4f55-b0de-3a6c9e1d2f40',
       fullName: 'Sam Okafor',
@@ -77,19 +78,39 @@ describe('buildLeadCreatedEvent', () => {
       website: 'https://okaforplumbing.co.uk',
     })
 
-    expect(a.event_type).toBe('lead.created')
-    expect(a.event_id).toMatch(/^[0-9a-f-]{36}$/)
-    expect(a.organization_id).toBe('0b5c1f9a-2f3e-4c1a-9f10-6d2b7e4a8c31')
+    expect(leadEnrichmentRequestedSchema.safeParse(a).success).toBe(true)
+    expect(a.event_type).toBe('lead.enrichment.requested')
+    expect(a.subject_id).toBe('8f2a7c44-91b2-4f55-b0de-3a6c9e1d2f40')
 
-    const b = buildLeadCreatedEvent({
-      organizationId: a.organization_id,
-      leadId: a.lead_id,
-    })
+    const b = buildLeadEnrichmentRequest({ organizationId: a.organization_id, leadId: a.subject_id })
     expect(b.event_id).not.toBe(a.event_id)
     // Missing optional fields normalise to null, never undefined (JSON.stringify drops those).
-    expect(b.full_name).toBeNull()
-    expect(b.company_name).toBeNull()
-    expect(b.website).toBeNull()
+    expect(b.payload).toEqual({ full_name: null, company_name: null, website: null })
+  })
+})
+
+describe('leadEnrichedSchema', () => {
+  const base = {
+    event_id: '5d9b1a52-6a4e-4f7b-9d7e-2c1e8f3a4b60',
+    event_type: 'lead.enriched',
+    organization_id: '0b5c1f9a-2f3e-4c1a-9f10-6d2b7e4a8c31',
+    subject_id: '8f2a7c44-91b2-4f55-b0de-3a6c9e1d2f40',
+    correlation_id: '1a2b3c4d-5e6f-4a1b-8c2d-3e4f5a6b7c8d',
+    payload: { research: { status: 'completed', lead_score: 72, pain_points: ['slow quotes'] } },
+  }
+
+  it('accepts a well-formed reply', () => {
+    expect(leadEnrichedSchema.safeParse(base).success).toBe(true)
+  })
+
+  it('rejects the old flat shape (research at the top level)', () => {
+    const { payload, ...rest } = base
+    expect(leadEnrichedSchema.safeParse({ ...rest, research: payload.research }).success).toBe(false)
+  })
+
+  it('rejects a score out of range', () => {
+    const bad = { ...base, payload: { research: { lead_score: 140 } } }
+    expect(leadEnrichedSchema.safeParse(bad).success).toBe(false)
   })
 })
 
