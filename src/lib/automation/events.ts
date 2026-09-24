@@ -3,6 +3,7 @@ import { after } from 'next/server'
 import { AUTOMATION_SECRET_HEADER } from './secret'
 import { createServiceClient } from '@/lib/supabase/service'
 import type { LeadEnrichmentRequested } from './contract'
+import { getAiBudget, budgetMessage } from '@/lib/ai-budget'
 
 // Outbound side of the automation contract: ask the engine to research a lead.
 //
@@ -59,6 +60,14 @@ async function send(event: LeadEnrichmentRequested, url: string, secret: string)
     if (jobError) return
     const { error } = await service.from('jobs').update(patch).match(jobKey)
     if (error) console.error(`[automation] job update failed event_id=${event.event_id}: ${error.message}`)
+  }
+
+  // Paid research stops at the org's daily AI cap (spam on a public form must not run up a bill).
+  const budget = await getAiBudget(service, event.organization_id)
+  if (budget.exhausted) {
+    console.warn(`[automation] enrichment skipped, ${budgetMessage(budget)} event_id=${event.event_id}`)
+    await markJob({ status: 'failed', finished_at: new Date().toISOString(), error_message: `${budgetMessage(budget)}; not researched` })
+    return
   }
 
   try {

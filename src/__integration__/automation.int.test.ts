@@ -62,6 +62,9 @@ describe.skipIf(!enabled)('automation integration (local stack)', () => {
     for (const t of ['approvals', 'jobs', 'follow_ups', 'research_reports', 'ai_usage_log', 'automation_events', 'activity_logs', 'leads', 'contacts', 'companies']) {
       await db.from(t).delete().eq('organization_id', orgId)
     }
+    await db.from('memberships').delete().eq('organization_id', orgId)
+    await db.from('profiles').update({ default_organization_id: null }).eq('user_id', userId)
+    await db.from('organizations').delete().eq('id', orgId)
     await db.auth.admin.deleteUser(userId)
   })
 

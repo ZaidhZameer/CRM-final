@@ -2,6 +2,7 @@
 
 import { createServiceClient } from '@/lib/supabase/service'
 import { RATE_LIMITS } from '@/lib/rate-limit'
+import { createLeadFromSubmission } from '@/lib/lead-intake'
 
 export async function submitPublicForm(
   formId: string,
@@ -40,15 +41,27 @@ export async function submitPublicForm(
   }
 
   // Insert submission
-  const { error } = await service
+  const { data: submission, error } = await service
     .from('lead_form_submissions')
     .insert({
       form_id: formId,
       organization_id: orgId,
       data_json: sanitized,
     })
+    .select('id')
+    .single()
 
-  if (error) return { error: 'Failed to submit. Please try again.' }
+  if (error || !submission) return { error: 'Failed to submit. Please try again.' }
+
+  // Speed to lead: the enquiry becomes a lead (deduped, researched) immediately instead of
+  // waiting for someone to click "Convert". If that fails, the submission is still saved and
+  // can be converted by hand, so the visitor always gets a success response.
+  try {
+    const intake = await createLeadFromSubmission(service, orgId, submission.id, sanitized, null)
+    if (intake.error) console.error('[forms] auto-convert failed', submission.id, intake.error)
+  } catch (err) {
+    console.error('[forms] auto-convert threw', submission.id, err instanceof Error ? err.message : err)
+  }
 
   // Increment submission count
   const { data: current } = await service

@@ -6,6 +6,7 @@ import { createServiceClient } from '@/lib/supabase/service'
 import { runBasicResearch, runStandardResearch, estimateCostCents } from '@/lib/ai/openai'
 import { RATE_LIMITS } from '@/lib/rate-limit'
 import { validate, uuidSchema } from '@/lib/validate'
+import { getAiBudget, budgetMessage } from '@/lib/ai-budget'
 
 export async function runAIResearch(leadId: string, tier: 'basic' | 'standard' = 'basic') {
   // Validate input
@@ -36,23 +37,9 @@ export async function runAIResearch(leadId: string, tier: 'basic' | 'standard' =
   const orgId = profile.default_organization_id
 
   // Check daily AI cap
-  const { data: org } = await service
-    .from('organizations')
-    .select('ai_daily_cap_cents')
-    .eq('id', orgId)
-    .single()
-
-  const { data: spendRows } = await service
-    .from('ai_usage_log')
-    .select('cost_usd_cents')
-    .eq('organization_id', orgId)
-    .gte('created_at', new Date(new Date().setHours(0, 0, 0, 0)).toISOString())
-
-  const todaySpend = (spendRows ?? []).reduce((sum: number, r: any) => sum + Number(r.cost_usd_cents), 0)
-  const cap = org?.ai_daily_cap_cents ?? 100
-
-  if (todaySpend >= cap) {
-    return { error: `Daily AI budget reached (${(todaySpend / 100).toFixed(2)} / ${(cap / 100).toFixed(2)} USD). Try again tomorrow.` }
+  const budget = await getAiBudget(service, orgId)
+  if (budget.exhausted) {
+    return { error: `${budgetMessage(budget)}. Try again tomorrow.` }
   }
 
   // Get lead + company + contact data
