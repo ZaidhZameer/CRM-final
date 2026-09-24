@@ -59,7 +59,7 @@ describe.skipIf(!enabled)('automation integration (local stack)', () => {
 
   afterAll(async () => {
     if (!orgId) return
-    for (const t of ['approvals', 'jobs', 'follow_ups', 'research_reports', 'ai_usage_log', 'automation_events', 'activity_logs', 'leads', 'contacts', 'companies']) {
+    for (const t of ['approvals', 'outreach_messages', 'jobs', 'follow_ups', 'research_reports', 'ai_usage_log', 'automation_events', 'activity_logs', 'leads', 'contacts', 'companies']) {
       await db.from(t).delete().eq('organization_id', orgId)
     }
     await db.from('memberships').delete().eq('organization_id', orgId)
@@ -111,6 +111,74 @@ describe.skipIf(!enabled)('automation integration (local stack)', () => {
     expect(res.status).toBe(200)
     const { data: after } = await db.from('jobs').select('job_type, status').eq('organization_id', orgId).like('job_type', 'int.%')
     expect(Object.fromEntries(after!.map((j) => [j.job_type, j.status]))).toEqual({ 'int.old': 'failed', 'int.fresh': 'queued' })
+  })
+
+  // ---- follow-up drafting (engine -> app) ---------------------------------------
+  const pendingFollowUp = async () => {
+    const { data: co } = await db.from('companies').insert({ organization_id: orgId, name: 'Draft Co' }).select('id').single()
+    const { data: ct } = await db.from('contacts').insert({ organization_id: orgId, company_id: co!.id, full_name: 'Dana Draft', email: `dana-${randomUUID()}@draftco.test` }).select('id').single()
+    const lead = await newLead({ company_id: co!.id, contact_id: ct!.id })
+    const scheduled = new Date(Date.now() + 2 * 24 * 60 * 60_000).toISOString()
+    const { data: fu, error } = await db.from('follow_ups').insert({ organization_id: orgId, lead_id: lead.id, scheduled_for: scheduled, source: 'automation', step: 1, decided_by: 'rule' }).select('id, scheduled_for').single()
+    if (error) throw error
+    return { leadId: lead.id, fu: fu as { id: string; scheduled_for: string } }
+  }
+  const postDrafted = (fuId: string, payload: Record<string, unknown>, eventId = randomUUID()) =>
+    fetch(`${APP}/api/automation/followup-drafted`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-flowlead-secret': env.AUTOMATION_SHARED_SECRET },
+      body: JSON.stringify({ event_id: eventId, event_type: 'followup.drafted', organization_id: orgId, subject_id: fuId, payload }),
+    })
+
+  it('a "send" draft becomes an Approval Inbox card and an outreach draft, and nothing is sent', async () => {
+    const { fu } = await pendingFollowUp()
+    const eventId = randomUUID()
+    const res = await postDrafted(fu.id, { decision: 'send', reason: 'Warm enquiry, 3 days quiet', subject: 'Quick follow-up', body: 'Hi Dana,\nOne idea for Draft Co.' }, eventId)
+    expect(await res.json()).toMatchObject({ ok: true, outcome: 'awaiting_approval' })
+
+    const { data: appr } = await db.from('approvals').select('status, tier, action_type, payload_json').eq('organization_id', orgId).eq('action_type', 'send_follow_up_email').single()
+    expect(appr).toMatchObject({ status: 'pending', tier: 'review' })
+    expect((appr!.payload_json as { subject: string }).subject).toBe('Quick follow-up')
+    const { data: msg } = await db.from('outreach_messages').select('status, sent_at, follow_up_id').eq('follow_up_id', fu.id).single()
+    expect(msg).toMatchObject({ status: 'draft', sent_at: null })
+
+    // Same delivery again is a no-op: still exactly one approval.
+    expect(await (await postDrafted(fu.id, { decision: 'send', reason: 'x', subject: 's', body: 'b' }, eventId)).json()).toMatchObject({ duplicate: true })
+    const { count } = await db.from('approvals').select('id', { count: 'exact', head: true }).eq('organization_id', orgId).eq('action_type', 'send_follow_up_email')
+    expect(count).toBe(1)
+  })
+
+  it('"delay" can only move a step later, capped at 7 days', async () => {
+    const { fu } = await pendingFollowUp()
+    const planned = new Date(fu.scheduled_for).getTime()
+
+    const earlier = await postDrafted(fu.id, { decision: 'delay', reason: 'try sooner', delay_until: new Date(planned - 60 * 60_000).toISOString() })
+    expect(await earlier.json()).toMatchObject({ outcome: 'delay_refused' })
+
+    const far = await postDrafted(fu.id, { decision: 'delay', reason: 'they are away', delay_until: new Date(planned + 30 * 24 * 60 * 60_000).toISOString() })
+    expect(await far.json()).toMatchObject({ outcome: 'delayed' })
+    const { data: after } = await db.from('follow_ups').select('scheduled_for, decided_by').eq('id', fu.id).single()
+    expect(new Date(after!.scheduled_for).getTime()).toBe(planned + 7 * 24 * 60 * 60_000)
+    expect(after!.decided_by).toBe('ai')
+  })
+
+  it('"skip" closes the step with the AI reason', async () => {
+    const { fu } = await pendingFollowUp()
+    await postDrafted(fu.id, { decision: 'skip', reason: 'Lead said they chose another agency' })
+    const { data: after } = await db.from('follow_ups').select('status, decided_by, reason').eq('id', fu.id).single()
+    expect(after).toMatchObject({ status: 'skipped', decided_by: 'ai' })
+    expect(after!.reason).toContain('another agency')
+  })
+
+  it('a draft for a do-not-contact lead is blocked by the database, not sent to the inbox', async () => {
+    const { leadId, fu } = await pendingFollowUp()
+    await db.from('leads').update({ do_not_contact: true }).eq('id', leadId)
+    const res = await postDrafted(fu.id, { decision: 'send', reason: 'x', subject: 's', body: 'b' })
+    const json = await res.json()
+    // DNC skips pending follow-ups (kill switch), so the step is either ignored or blocked.
+    expect(['ignored', 'blocked']).toContain(json.outcome)
+    const { count } = await db.from('outreach_messages').select('id', { count: 'exact', head: true }).eq('lead_id', leadId)
+    expect(count).toBe(0)
   })
 
   it('findOpenLeadIdByEmail returns the open lead and ignores lost or deleted ones', async () => {

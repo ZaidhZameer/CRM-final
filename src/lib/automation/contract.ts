@@ -72,7 +72,66 @@ export type LeadEnrichmentRequested = z.infer<typeof leadEnrichmentRequestedSche
 export type LeadEnriched = z.infer<typeof leadEnrichedSchema>
 
 /** Every contract, keyed by event_type. Used to generate docs/contracts/*.schema.json. */
+// ---- Follow-ups (spec: Obsidian SALES-OS/INTERNAL/FLOWLEAD_FOLLOWUPS_SPEC_2026-09-24.md) ----
+// subject_id is the follow_ups row. The engine drafts the email and may propose to delay or
+// skip the step; FlowLead enforces the bounds (never earlier, never past latest_allowed).
+
+const historyItem = z.object({
+  direction: z.enum(['outbound', 'inbound']),
+  subject: shortText(500),
+  body: z.string().max(10000),
+  at: z.string().max(40),
+})
+
+export const followUpDraftRequestedSchema = envelope.extend({
+  event_type: z.literal('followup.draft.requested'),
+  payload: z.object({
+    lead_id: z.uuid(),
+    step: z.number().int().min(1).max(10),
+    max_steps: z.number().int().min(1).max(10),
+    scheduled_for: z.string().max(40),
+    latest_allowed: z.string().max(40), // the furthest the engine may delay this step
+    contact: z.object({
+      full_name: shortText(500),
+      email: z.string().max(320),
+      company_name: shortText(500),
+      job_title: shortText(500),
+    }),
+    research: z
+      .object({
+        company_summary: shortText(20000),
+        pain_points: z.array(z.string().max(2000)).max(50).nullable(),
+        recommended_offer: shortText(5000),
+        outreach_angle: shortText(5000),
+        next_best_action: shortText(5000),
+      })
+      .nullable(),
+    enquiry: shortText(5000), // what the lead told us (form message / booking notes)
+    history: z.array(historyItem).max(20),
+    sender: z.object({ name: shortText(200), company: shortText(200) }),
+    rules: z.object({ booking_link_allowed: z.boolean(), max_words: z.number().int().min(30).max(400) }),
+  }),
+})
+
+export const followUpDraftedSchema = envelope.extend({
+  event_type: z.literal('followup.drafted'),
+  payload: z.object({
+    decision: z.enum(['send', 'delay', 'skip']),
+    reason: z.string().min(1).max(1000),
+    subject: z.string().min(1).max(300).optional(),
+    body: z.string().min(1).max(8000).optional(),
+    delay_until: z.string().max(40).optional(),
+    usage: z.array(usageSchema).max(20).optional(),
+  }).refine((p) => p.decision !== 'send' || (p.subject && p.body), { message: 'send needs subject and body' })
+    .refine((p) => p.decision !== 'delay' || p.delay_until, { message: 'delay needs delay_until' }),
+})
+
+export type FollowUpDraftRequested = z.infer<typeof followUpDraftRequestedSchema>
+export type FollowUpDrafted = z.infer<typeof followUpDraftedSchema>
+
 export const CONTRACTS = {
   'lead.enrichment.requested': leadEnrichmentRequestedSchema,
   'lead.enriched': leadEnrichedSchema,
+  'followup.draft.requested': followUpDraftRequestedSchema,
+  'followup.drafted': followUpDraftedSchema,
 } as const

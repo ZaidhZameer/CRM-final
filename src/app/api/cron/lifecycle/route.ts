@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { verifyCronSecret } from '@/lib/automation/secret'
+import { requestDueFollowUpDrafts } from '@/lib/automation/follow-up-drafts'
 
 // Called every 15 minutes by the n8n lifecycle scheduler.
 // GET /api/cron/lifecycle   (header: x-cron-secret)
 //   1. Jobs the engine never answered are closed as failed, so nothing sits "running" forever.
 //   2. Meetings that ended but were never given an outcome get one reminder task for the rep.
+//   3. Automated follow-ups due within a day are sent to the engine for drafting.
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -88,8 +90,16 @@ export async function GET(request: NextRequest) {
     else promptsCreated++
   }
 
+  // ---- 3. Follow-up drafts due within a day ------------------------------------
+  const drafts = await requestDueFollowUpDrafts(service).catch((err) => {
+    console.error('[cron/lifecycle] follow-up drafting failed', err instanceof Error ? err.message : err)
+    return { requested: 0, skipped: ['error'] }
+  })
+
   return NextResponse.json({
     ok: !jobsError && !meetingsError,
+    follow_up_drafts_requested: drafts.requested,
+    follow_up_drafts_skipped: drafts.skipped.length,
     stale_jobs_closed: staleJobs?.length ?? 0,
     meetings_checked: meetings?.length ?? 0,
     outcome_prompts_created: promptsCreated,
