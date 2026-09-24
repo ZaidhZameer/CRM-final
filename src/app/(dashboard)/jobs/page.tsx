@@ -27,6 +27,16 @@ const STATUS_COLORS: Record<string, BadgeTone> = {
   cancelled: 'neutral',
 }
 
+// Full class names so Tailwind can see them; `text-${tone}-500` is never generated.
+const ICON_COLORS: Record<string, string> = {
+  queued: 'text-muted-foreground',
+  running: 'text-blue-500',
+  awaiting_approval: 'text-amber-500',
+  done: 'text-emerald-500',
+  failed: 'text-red-500',
+  cancelled: 'text-muted-foreground',
+}
+
 const STATUS_OPTIONS = ['queued', 'running', 'awaiting_approval', 'done', 'failed', 'cancelled']
 
 export default function JobsPage() {
@@ -105,7 +115,7 @@ export default function JobsPage() {
                 className="flex flex-col gap-2 rounded-xl border bg-card p-4 transition-all duration-150 hover:shadow-sm sm:flex-row sm:items-center sm:gap-3"
               >
                 <div className="flex items-start gap-3 min-w-0 flex-1">
-                  <StatusIcon className={`mt-0.5 size-5 shrink-0 text-${STATUS_COLORS[job.status]}-500`} />
+                  <StatusIcon className={`mt-0.5 size-5 shrink-0 ${ICON_COLORS[job.status] ?? 'text-muted-foreground'}`} />
                   <div className="min-w-0 flex-1">
                     <p className="text-sm font-medium">
                       {job.job_type}
