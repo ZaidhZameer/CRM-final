@@ -32,9 +32,11 @@ export async function GET(request: NextRequest) {
       finished_at: new Date().toISOString(),
       error_message: `no result from the engine within ${JOB_TIMEOUT_MINUTES} minutes`,
     })
-    // Queued jobs age from creation, running jobs from when they actually started.
+    // Jobs age from when they entered their current state: queued_at for queued (a job can
+    // wait in awaiting_approval first), started_at for running.
     .or(
-      `and(status.eq.queued,created_at.lt.${cutoff}),` +
+      `and(status.eq.queued,queued_at.lt.${cutoff}),` +
+        `and(status.eq.queued,queued_at.is.null,created_at.lt.${cutoff}),` +
         `and(status.eq.running,started_at.lt.${cutoff}),` +
         `and(status.eq.running,started_at.is.null,created_at.lt.${cutoff})`
     )
