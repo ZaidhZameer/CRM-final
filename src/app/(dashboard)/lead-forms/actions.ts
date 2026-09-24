@@ -6,6 +6,7 @@ import { createServiceClient } from '@/lib/supabase/service'
 import { scoreLeadRule } from '@/lib/scoring'
 import { RATE_LIMITS } from '@/lib/rate-limit'
 import { requestLeadEnrichment } from '@/lib/automation/events'
+import { findOpenLeadIdByEmail, websiteFromEmail } from '@/lib/leads'
 
 export async function getLeadForms() {
   const supabase = await createClient()
@@ -164,12 +165,33 @@ export async function convertSubmissionToLead(submissionId: string) {
   try {
     const d = submission.data_json as Record<string, string>
 
+    // Repeat enquiry from someone who already has an open lead: link the submission to that
+    // lead instead of creating a duplicate (which would also double any follow-ups).
+    const existingLeadId = await findOpenLeadIdByEmail(service, orgId, d.email)
+    if (existingLeadId) {
+      await service
+        .from('lead_form_submissions')
+        .update({ converted_lead_id: existingLeadId })
+        .eq('id', submissionId)
+      await service.from('activity_logs').insert({
+        organization_id: orgId,
+        actor_profile_id: profile.id,
+        action: 'updated',
+        entity_type: 'lead',
+        entity_id: existingLeadId,
+        after_json: { source: 'web_form', submission_id: submissionId, repeat_enquiry: true },
+      })
+      return { success: true, leadId: existingLeadId, duplicate: true }
+    }
+
+    const website = d.website || websiteFromEmail(d.email)
+
     const { data: company } = await service
       .from('companies')
       .insert({
         organization_id: orgId,
         name: d.company_name || d.contact_name || 'Unknown',
-        website: d.website || null,
+        website: website || null,
         industry: d.industry || null,
         location: d.location || null,
         created_by: profile.id,
@@ -194,7 +216,7 @@ export async function convertSubmissionToLead(submissionId: string) {
     const scoreInput = {
       email: d.email,
       phone: d.phone,
-      website: d.website,
+      website: website ?? undefined,
       jobTitle: d.job_title,
       companyName: d.company_name,
       industry: d.industry,
@@ -239,7 +261,7 @@ export async function convertSubmissionToLead(submissionId: string) {
       leadId: lead.id,
       fullName: d.contact_name || null,
       companyName: d.company_name || null,
-      website: d.website || null,
+      website: website || null,
     })
 
     return { success: true, leadId: lead.id }
