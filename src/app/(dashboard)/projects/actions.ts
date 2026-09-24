@@ -31,7 +31,7 @@ export async function getProjects() {
   // Get won deals that haven't been converted to projects yet
   const { data: wonDeals } = await service
     .from('deals')
-    .select('id, title, value, lead_id, leads:lead_id(company_name)')
+    .select('id, title, value, lead_id, leads:lead_id(companies(name))')
     .eq('organization_id', profile.default_organization_id)
     .eq('status', 'won')
     .order('created_at', { ascending: false })
@@ -60,7 +60,7 @@ export async function getProjects() {
       id: d.id,
       title: d.title,
       value: d.value,
-      companyName: d.leads?.company_name ?? 'Unknown',
+      companyName: d.leads?.companies?.name ?? 'Unknown',
     })),
   }
 }

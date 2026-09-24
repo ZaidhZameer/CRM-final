@@ -23,7 +23,7 @@ export async function getTrashedLeads() {
 
   const { data } = await service
     .from('leads')
-    .select('id, company_name, status, quality, score, deleted_at, contacts(full_name, email)')
+    .select('id, status, lead_quality, lead_score, deleted_at, companies(name), contacts(full_name, email)')
     .eq('organization_id', profile.default_organization_id)
     .not('deleted_at', 'is', null)
     .order('deleted_at', { ascending: false })
@@ -32,13 +32,14 @@ export async function getTrashedLeads() {
   return {
     leads: (data ?? []).map((l: any) => ({
       id: l.id,
-      companyName: l.company_name,
+      companyName: l.companies?.name ?? null,
       status: l.status,
-      quality: l.quality,
-      score: l.score,
+      quality: l.lead_quality,
+      score: l.lead_score,
       deletedAt: l.deleted_at,
-      contactName: l.contacts?.[0]?.full_name ?? null,
-      contactEmail: l.contacts?.[0]?.email ?? null,
+      // leads.contact_id is many-to-one, so PostgREST embeds a single object, not an array
+      contactName: l.contacts?.full_name ?? null,
+      contactEmail: l.contacts?.email ?? null,
     })),
   }
 }
