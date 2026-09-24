@@ -10,7 +10,13 @@ function getIP(request: NextRequest): string {
   )
 }
 
-const PUBLIC_ROUTES = ['/sign-in', '/sign-up', '/auth/callback', '/auth/confirm', '/reset-password', '/f/', '/privacy', '/terms']
+// '/book/' is the public booking page prospects open. '/api/automation/' and '/api/cron/'
+// are machine-to-machine: they have no session and authenticate with their own
+// fail-closed shared-secret header instead.
+const PUBLIC_ROUTES = [
+  '/sign-in', '/sign-up', '/auth/callback', '/auth/confirm', '/reset-password', '/f/', '/privacy', '/terms',
+  '/book/', '/api/automation/', '/api/cron/',
+]
 
 export default async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl

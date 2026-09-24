@@ -1,6 +1,21 @@
 import { Resend } from 'resend'
 
-const resend = new Resend(process.env.RESEND_API_KEY)
+// Created on first send, not at import: `new Resend(undefined)` throws, which crashed every
+// route importing this module whenever RESEND_API_KEY was unset.
+let client: Resend | null = null
+const resend = {
+  emails: {
+    async send(...args: Parameters<Resend['emails']['send']>) {
+      const key = process.env.RESEND_API_KEY
+      if (!key) {
+        console.warn('[email] RESEND_API_KEY is not set; email skipped')
+        return { data: null, error: { name: 'missing_api_key', message: 'Email is not configured' } }
+      }
+      client ??= new Resend(key)
+      return client.emails.send(...args)
+    },
+  },
+}
 
 const FROM = process.env.NEXT_PUBLIC_EMAIL_FROM ?? 'LeadFlow CRM <onboarding@resend.dev>'
 
