@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/service'
+import { scheduledSendTime } from '@/lib/follow-ups'
 import { verifyAutomationSecret } from '@/lib/automation/secret'
 import { leadEnrichedSchema } from '@/lib/automation/contract'
 
@@ -230,6 +231,36 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // ---- 6b. Schedule the first automated follow-up ---------------------------
+    // Only when this result actually landed and the lead has never had an automated follow-up
+    // (re-enrichment must not restart a sequence). The DB interlocks have the final say:
+    // do-not-contact, closed lead, a booked meeting or PECR ineligibility all raise P0001.
+    let followUp: 'scheduled' | 'not_scheduled' | string = 'not_scheduled'
+    if (outcome === 'applied' && r.status === 'completed') {
+      const { count: priorAutomated } = await service
+        .from('follow_ups')
+        .select('id', { count: 'exact', head: true })
+        .eq('organization_id', lead.organization_id)
+        .eq('lead_id', lead.id)
+        .eq('source', 'automation')
+      const sendAt = scheduledSendTime(new Date(), 1)
+      if (!priorAutomated && sendAt) {
+        const { error: fuError } = await service.from('follow_ups').insert({
+          organization_id: lead.organization_id,
+          lead_id: lead.id,
+          scheduled_for: sendAt.toISOString(),
+          reason: 'Step 1: first follow-up after research',
+          status: 'pending',
+          source: 'automation',
+          step: 1,
+          decided_by: 'rule',
+        })
+        if (!fuError) followUp = 'scheduled'
+        else if (fuError.code === 'P0001') followUp = fuError.message // e.g. follow_up_blocked: not_eligible_pecr
+        else console.error('[automation] follow-up scheduling failed', body.event_id, fuError.message)
+      }
+    }
+
     // ---- 7. Activity log + close the event -----------------------------------
     await service.from('activity_logs').insert({
       organization_id: lead.organization_id,
@@ -241,6 +272,7 @@ export async function POST(request: NextRequest) {
         event_id: body.event_id,
         research_report_id: report.id,
         outcome,
+        follow_up: followUp,
       },
     })
 
