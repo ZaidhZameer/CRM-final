@@ -10,7 +10,8 @@
     "lint": "eslint",
     "test": "vitest run",
     "test:watch": "vitest",
-    "contracts:export": "node --experimental-strip-types --no-warnings scripts/export-contracts.ts"
+    "contracts:export": "node --experimental-strip-types --no-warnings scripts/export-contracts.ts",
+    "test:integration": "FLOWLEAD_INTEGRATION=1 vitest run src/__integration__"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.95.1",
