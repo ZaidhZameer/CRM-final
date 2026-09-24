@@ -4,9 +4,10 @@ import { useState, useRef, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter, usePathname } from 'next/navigation'
 import Link from 'next/link'
-import { Search, Bell, LogOut, ChevronRight, User, Menu } from 'lucide-react'
+import { Search, Bell, LogOut, ChevronRight, User, Menu, ShieldCheck, AlertTriangle } from 'lucide-react'
 import { ThemeToggle } from '@/components/theme/theme-toggle'
 import { OPEN_COMMAND_PALETTE_EVENT } from '@/components/layout/command-palette'
+import { getAttentionCounts, type AttentionCounts } from '@/actions/attention'
 
 type Org = { id: string; name: string; slug: string; role: string }
 type Profile = { id: string; fullName: string | null; avatarUrl: string | null }
@@ -24,6 +25,8 @@ const BREADCRUMB_LABELS: Record<string, string> = {
   settings: 'Settings',
   tables: 'Tables',
   trash: 'Trash',
+  approvals: 'Approvals',
+  jobs: 'Jobs',
   onboarding: 'Onboarding',
 }
 
@@ -40,10 +43,24 @@ export function TopBar({
 }) {
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [notifOpen, setNotifOpen] = useState(false)
+  const [attention, setAttention] = useState<AttentionCounts>({ pendingApprovals: 0, failedJobs24h: 0 })
+  const attentionTotal = attention.pendingApprovals + attention.failedJobs24h
+
   const menuRef = useRef<HTMLDivElement>(null)
   const notifRef = useRef<HTMLDivElement>(null)
   const router = useRouter()
   const pathname = usePathname()
+  // Refresh on navigation and every minute, so the badge follows decisions made elsewhere.
+  useEffect(() => {
+    let active = true
+    const load = () =>
+      getAttentionCounts()
+        .then((c) => { if (active) setAttention(c) })
+        .catch(() => {})
+    load()
+    const timer = setInterval(load, 60_000)
+    return () => { active = false; clearInterval(timer) }
+  }, [pathname])
   const supabase = createClient()
 
   useEffect(() => {
@@ -137,6 +154,11 @@ export function TopBar({
             className="relative flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           >
             <Bell className="size-4" />
+            {attentionTotal > 0 && (
+              <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-semibold text-white">
+                {attentionTotal > 9 ? '9+' : attentionTotal}
+              </span>
+            )}
           </button>
 
           {notifOpen && (
@@ -144,11 +166,36 @@ export function TopBar({
               <div className="border-b px-3 py-2.5">
                 <p className="text-sm font-medium">Notifications</p>
               </div>
-              <div className="flex flex-col items-center gap-1.5 px-3 py-8 text-center">
-                <Bell className="size-6 text-muted-foreground/40" />
-                <p className="text-sm font-medium">You&apos;re all caught up</p>
-                <p className="text-xs text-muted-foreground">No new notifications right now.</p>
-              </div>
+              {attentionTotal === 0 ? (
+                <div className="flex flex-col items-center gap-1.5 px-3 py-8 text-center">
+                  <Bell className="size-6 text-muted-foreground/40" />
+                  <p className="text-sm font-medium">You&apos;re all caught up</p>
+                  <p className="text-xs text-muted-foreground">No new notifications right now.</p>
+                </div>
+              ) : (
+                <div className="flex flex-col py-1">
+                  {attention.pendingApprovals > 0 && (
+                    <Link
+                      href="/approvals"
+                      onClick={() => setNotifOpen(false)}
+                      className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition-colors hover:bg-muted"
+                    >
+                      <ShieldCheck className="size-4 text-amber-500" />
+                      {attention.pendingApprovals} approval{attention.pendingApprovals === 1 ? '' : 's'} waiting for you
+                    </Link>
+                  )}
+                  {attention.failedJobs24h > 0 && (
+                    <Link
+                      href="/jobs"
+                      onClick={() => setNotifOpen(false)}
+                      className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition-colors hover:bg-muted"
+                    >
+                      <AlertTriangle className="size-4 text-destructive" />
+                      {attention.failedJobs24h} automation job{attention.failedJobs24h === 1 ? '' : 's'} failed in the last 24h
+                    </Link>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </div>
