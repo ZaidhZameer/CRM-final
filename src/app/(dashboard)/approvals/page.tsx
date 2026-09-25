@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import Link from 'next/link'
 import { Card } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Badge } from '@/components/ui/badge'
@@ -165,7 +166,7 @@ export default function ApprovalsPage() {
                         />
                       </div>
                     )}
-                    {approval.action_type !== 'send_follow_up_email' && approval.payload_json && Object.keys(approval.payload_json).length > 0 && (
+                    {!['send_follow_up_email', 'send_proposal'].includes(approval.action_type) && approval.payload_json && Object.keys(approval.payload_json).length > 0 && (
                       <details className="mt-2 max-w-3xl" open={isPending}>
                         <summary className="cursor-pointer text-xs font-medium text-muted-foreground">
                           What will happen if approved
@@ -197,6 +198,12 @@ export default function ApprovalsPage() {
                       disabled={submitting[approval.id]}
                     />
                     <div className="flex gap-2">
+                      {approval.action_type === 'send_proposal' ? (
+                        // Proposals are approved in the editor, where the human sets the price.
+                        <Link href={String((approval.payload_json as { editor_url?: string } | null)?.editor_url ?? '/proposals')}>
+                          <Button className="h-9 px-4">Open proposal</Button>
+                        </Link>
+                      ) : (
                       <Button
                         variant="default"
                         className="h-9 px-4 bg-emerald-600 hover:bg-emerald-700 text-white"
@@ -205,6 +212,7 @@ export default function ApprovalsPage() {
                       >
                         {submitting[approval.id] ? 'Saving...' : 'Approve'}
                       </Button>
+                      )}
                       <Button
                         variant="destructive"
                         className="h-9 px-4"

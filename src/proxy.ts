@@ -10,12 +10,12 @@ function getIP(request: NextRequest): string {
   )
 }
 
-// '/book/' is the public booking page prospects open. '/api/automation/' and '/api/cron/'
+// '/book/' is the public booking page prospects open; '/p/' is a shared proposal link. '/api/automation/' and '/api/cron/'
 // are machine-to-machine: they have no session and authenticate with their own
 // fail-closed shared-secret header instead.
 const PUBLIC_ROUTES = [
   '/sign-in', '/sign-up', '/auth/callback', '/auth/confirm', '/reset-password', '/f/', '/privacy', '/terms',
-  '/book/', '/api/automation/', '/api/cron/',
+  '/book/', '/api/automation/', '/api/cron/', '/p/',
 ]
 
 export default async function proxy(request: NextRequest) {

@@ -23,6 +23,7 @@ import {
   X,
   ShieldCheck,
   Activity,
+  FileSignature,
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
@@ -37,6 +38,7 @@ const MAIN_NAV = [
 
 const MANAGE_NAV = [
   { label: 'Tasks', href: '/tasks', icon: CheckSquare },
+  { label: 'Proposals', href: '/proposals', icon: FileSignature },
   { label: 'Approvals', href: '/approvals', icon: ShieldCheck },
   { label: 'Jobs', href: '/jobs', icon: Activity },
   { label: 'Calendar', href: '/calendar', icon: Calendar },

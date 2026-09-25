@@ -26,6 +26,7 @@ const BREADCRUMB_LABELS: Record<string, string> = {
   tables: 'Tables',
   trash: 'Trash',
   approvals: 'Approvals',
+  proposals: 'Proposals',
   jobs: 'Jobs',
   onboarding: 'Onboarding',
 }

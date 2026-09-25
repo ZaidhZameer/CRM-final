@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { getLeadDetail, updateLeadStatus, addNote, addReply } from './actions'
 import { runAIResearch } from './ai-actions'
 import { softDeleteLead } from '../../trash/actions'
+import { draftProposal } from '../../proposals/actions'
 import { useConfirm } from '@/components/ui/confirm-dialog'
 import { useToast } from '@/components/ui/toast'
 import Link from 'next/link'
@@ -47,6 +48,7 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
   const [statusUpdating, setStatusUpdating] = useState(false)
   const [aiRunning, setAiRunning] = useState(false)
   const [aiError, setAiError] = useState<string | null>(null)
+  const [drafting, setDrafting] = useState(false)
 
   async function load() {
     const result = await getLeadDetail(id)
@@ -129,6 +131,23 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
           <span className="rounded-full bg-muted px-2.5 py-1 text-xs font-bold">
             Score: {lead.lead_score}
           </span>
+          <Button
+            size="sm"
+            disabled={drafting}
+            onClick={async () => {
+              const brief = window.prompt('Anything the proposal must cover? (optional: e.g. "new site + booking automation, budget around 3k")')
+              if (brief === null) return
+              setDrafting(true)
+              const res = await draftProposal(id, brief || undefined)
+              setDrafting(false)
+              if (res.proposalId) {
+                if (res.error) toast({ variant: 'error', title: 'Draft created without AI', description: res.error })
+                router.push(`/proposals/${res.proposalId}`)
+              } else toast({ variant: 'error', title: 'Could not start a proposal', description: res.error })
+            }}
+          >
+            {drafting ? 'Starting…' : 'Draft proposal'}
+          </Button>
           <Button
             variant="outline"
             size="sm"

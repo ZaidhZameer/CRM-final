@@ -94,7 +94,11 @@ export async function decideApprovalAction(
   // sends it at its scheduled time from the connected mailbox.
   const service = createServiceClient()
   if (decision === 'approved') await queueApprovedFollowUp(service, approvalId)
-  else await closeRejectedFollowUp(service, approvalId)
+  else {
+    await closeRejectedFollowUp(service, approvalId)
+    // Rejecting a proposal in the inbox withdraws it.
+    await service.from('proposals').update({ status: 'withdrawn' }).eq('approval_id', approvalId).in('status', ['draft', 'approved'])
+  }
 
   revalidatePath('/approvals')
   return { success: true }
