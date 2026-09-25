@@ -62,7 +62,7 @@ describe.skipIf(!enabled)('automation integration (local stack)', () => {
 
   afterAll(async () => {
     if (!orgId) return
-    for (const t of ['auto_replies', 'tasks', 'mail_connections', 'approvals', 'outreach_messages', 'jobs', 'follow_ups', 'research_reports', 'ai_usage_log', 'automation_events', 'activity_logs', 'leads', 'contacts', 'companies']) {
+    for (const t of ['proposals', 'auto_replies', 'tasks', 'mail_connections', 'approvals', 'outreach_messages', 'jobs', 'follow_ups', 'research_reports', 'ai_usage_log', 'automation_events', 'activity_logs', 'leads', 'contacts', 'companies']) {
       await db.from(t).delete().eq('organization_id', orgId)
     }
     await db.from('memberships').delete().eq('organization_id', orgId)
@@ -296,6 +296,34 @@ describe.skipIf(!enabled)('automation integration (local stack)', () => {
 
     await db.from('mail_connections').delete().eq('organization_id', orgId)
     await db.from('auto_replies').delete().eq('organization_id', orgId)
+  })
+
+  // ---- proposals ----------------------------------------------------------------
+  it('a drafted proposal is stored without any AI price and raises an always-human approval', async () => {
+    const lead = await newLead()
+    const { data: prop } = await db.from('proposals').insert({ organization_id: orgId, lead_id: lead.id, title: 'Proposal for Acme' }).select('id').single()
+    const eventId = randomUUID()
+    const send = () => fetch(`${APP}/api/automation/proposal-drafted`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-flowlead-secret': env.AUTOMATION_SHARED_SECRET },
+      body: JSON.stringify({
+        event_id: eventId, event_type: 'proposal.drafted', organization_id: orgId, subject_id: prop!.id,
+        payload: { title: 'Website + booking automation for Acme', sections: {
+          summary: 'A new site and automated booking for £4,500.', situation: 's', solution: 'x', timeline: '6 weeks',
+          scope: ['Design', 'Build'], assumptions: ['Content supplied'], next_steps: 'Approve and pay a £1k deposit' } },
+      }),
+    })
+    expect(await (await send()).json()).toMatchObject({ ok: true, outcome: 'drafted' })
+    expect(await (await send()).json()).toMatchObject({ duplicate: true })
+
+    const { data: after } = await db.from('proposals').select('title, content_json, approval_id, status, price_amount').eq('id', prop!.id).single()
+    const text = JSON.stringify(after!.content_json)
+    expect(text).not.toMatch(/£|4,500|1k/)
+    expect(text).toContain('[pricing set separately]')
+    expect(after).toMatchObject({ status: 'draft', price_amount: null, title: 'Website + booking automation for Acme' })
+
+    const { data: appr } = await db.from('approvals').select('tier, action_type, status').eq('id', after!.approval_id).single()
+    expect(appr).toEqual({ tier: 'always_human', action_type: 'send_proposal', status: 'pending' })
   })
 
   it('findOpenLeadIdByEmail returns the open lead and ignores lost or deleted ones', async () => {

@@ -126,6 +126,58 @@ export const followUpDraftedSchema = envelope.extend({
     .refine((p) => p.decision !== 'delay' || p.delay_until, { message: 'delay needs delay_until' }),
 })
 
+// ---- Proposals (spec: Obsidian SALES-OS/INTERNAL/FLOWLEAD_PROPOSALS_SPEC_2026-09-25.md) ----
+// subject_id is the proposals row. There is deliberately NO price anywhere in these contracts:
+// a human sets the price in FlowLead (and the DB refuses approval without one).
+
+export const proposalDraftRequestedSchema = envelope.extend({
+  event_type: z.literal('proposal.draft.requested'),
+  payload: z.object({
+    lead_id: z.uuid(),
+    brief: shortText(4000),
+    contact: z.object({ full_name: shortText(500), company_name: shortText(500), job_title: shortText(500) }),
+    enquiry: shortText(5000),
+    research: z
+      .object({
+        company_summary: shortText(20000),
+        pain_points: z.array(z.string().max(2000)).max(50).nullable(),
+        recommended_offer: shortText(5000),
+      })
+      .nullable(),
+    meeting: z.object({ title: shortText(500), notes: shortText(20000), ai_summary: shortText(20000) }).nullable(),
+    agency: z.object({
+      name: shortText(200),
+      services: shortText(5000),
+      brand_voice: shortText(2000),
+      past_work: shortText(5000),
+      do_rules: shortText(2000),
+      dont_rules: shortText(2000),
+    }),
+  }),
+})
+
+const proposalSection = z.string().max(6000)
+
+export const proposalDraftedSchema = envelope.extend({
+  event_type: z.literal('proposal.drafted'),
+  payload: z.object({
+    title: z.string().min(1).max(200),
+    sections: z.object({
+      summary: proposalSection,
+      situation: proposalSection,
+      solution: proposalSection,
+      scope: z.array(z.string().max(600)).max(20),
+      timeline: proposalSection,
+      assumptions: z.array(z.string().max(600)).max(15),
+      next_steps: proposalSection,
+    }),
+    usage: z.array(usageSchema).max(20).optional(),
+  }),
+})
+
+export type ProposalDraftRequested = z.infer<typeof proposalDraftRequestedSchema>
+export type ProposalDrafted = z.infer<typeof proposalDraftedSchema>
+
 export type FollowUpDraftRequested = z.infer<typeof followUpDraftRequestedSchema>
 export type FollowUpDrafted = z.infer<typeof followUpDraftedSchema>
 
@@ -134,4 +186,6 @@ export const CONTRACTS = {
   'lead.enriched': leadEnrichedSchema,
   'followup.draft.requested': followUpDraftRequestedSchema,
   'followup.drafted': followUpDraftedSchema,
+  'proposal.draft.requested': proposalDraftRequestedSchema,
+  'proposal.drafted': proposalDraftedSchema,
 } as const
