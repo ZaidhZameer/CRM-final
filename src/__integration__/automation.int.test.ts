@@ -8,6 +8,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { findOpenLeadIdByEmail } from '@/lib/leads'
 import { queueApprovedFollowUp, closeRejectedFollowUp, sendDueFollowUps } from '@/lib/follow-up-sender'
 import { applyReply } from '@/lib/reply-watcher'
+import { sendEnquiryAcknowledgement } from '@/lib/auto-reply'
 
 const enabled = process.env.FLOWLEAD_INTEGRATION === '1'
 // Minimal .env.local reader (KEY=value, optional quotes); values are never logged.
@@ -61,7 +62,7 @@ describe.skipIf(!enabled)('automation integration (local stack)', () => {
 
   afterAll(async () => {
     if (!orgId) return
-    for (const t of ['tasks', 'mail_connections', 'approvals', 'outreach_messages', 'jobs', 'follow_ups', 'research_reports', 'ai_usage_log', 'automation_events', 'activity_logs', 'leads', 'contacts', 'companies']) {
+    for (const t of ['auto_replies', 'tasks', 'mail_connections', 'approvals', 'outreach_messages', 'jobs', 'follow_ups', 'research_reports', 'ai_usage_log', 'automation_events', 'activity_logs', 'leads', 'contacts', 'companies']) {
       await db.from(t).delete().eq('organization_id', orgId)
     }
     await db.from('memberships').delete().eq('organization_id', orgId)
@@ -269,6 +270,32 @@ describe.skipIf(!enabled)('automation integration (local stack)', () => {
 
   it('mail in threads FlowLead did not start is ignored', async () => {
     expect(await applyReply(db, { organization_id: orgId }, reply(`th-unknown-${randomUUID()}`))).toBe('not_ours')
+  })
+
+  // ---- instant acknowledgement --------------------------------------------------
+  it('the instant reply respects on/off, the mailbox, do-not-contact, and once-per-day', async () => {
+    const lead = await newLead()
+    const ack = () => sendEnquiryAcknowledgement(db, { organizationId: orgId, leadId: lead.id, email: 'x@acme.test', fullName: 'Sam Lee', companyName: 'Acme' })
+
+    expect(await ack()).toBe('off') // not switched on yet
+    await db.from('auto_replies').upsert({ organization_id: orgId, enabled: true })
+    expect(await ack()).toBe('no_mailbox')
+
+    const { data: me } = await db.from('profiles').select('id').eq('user_id', userId).single()
+    await db.from('mail_connections').insert({ organization_id: orgId, profile_id: me!.id, email: 'me@test.dev', access_token: 'fake', token_expires_at: new Date(Date.now() + 3600_000).toISOString() })
+
+    await db.from('leads').update({ do_not_contact: true }).eq('id', lead.id)
+    expect(await ack()).toBe('skipped') // DB interlock refuses: never reaches Gmail
+    await db.from('leads').update({ do_not_contact: false }).eq('id', lead.id)
+
+    // With a fake token Gmail rejects the send: recorded as failed and visible as a failed job.
+    expect(await ack()).toBe('failed')
+    const { data: job } = await db.from('jobs').select('status').eq('organization_id', orgId).eq('job_type', 'enquiry.ack').single()
+    expect(job!.status).toBe('failed')
+    expect(await ack()).toBe('skipped') // one attempt per lead per day
+
+    await db.from('mail_connections').delete().eq('organization_id', orgId)
+    await db.from('auto_replies').delete().eq('organization_id', orgId)
   })
 
   it('findOpenLeadIdByEmail returns the open lead and ignores lost or deleted ones', async () => {

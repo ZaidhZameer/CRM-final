@@ -2,7 +2,9 @@
 
 import { createServiceClient } from '@/lib/supabase/service'
 import { RATE_LIMITS } from '@/lib/rate-limit'
+import { after } from 'next/server'
 import { createLeadFromSubmission } from '@/lib/lead-intake'
+import { sendEnquiryAcknowledgement } from '@/lib/auto-reply'
 
 export async function submitPublicForm(
   formId: string,
@@ -59,6 +61,20 @@ export async function submitPublicForm(
   try {
     const intake = await createLeadFromSubmission(service, orgId, submission.id, sanitized, null)
     if (intake.error) console.error('[forms] auto-convert failed', submission.id, intake.error)
+    else if (intake.leadId) {
+      // Instant acknowledgement (if switched on in Settings), after the visitor's response is sent.
+      const leadId = intake.leadId
+      after(async () => {
+        const outcome = await sendEnquiryAcknowledgement(service, {
+          organizationId: orgId,
+          leadId,
+          email: sanitized.email ?? null,
+          fullName: sanitized.contact_name ?? null,
+          companyName: sanitized.company_name ?? null,
+        })
+        if (outcome === 'failed') console.error('[forms] acknowledgement failed', leadId)
+      })
+    }
   } catch (err) {
     console.error('[forms] auto-convert threw', submission.id, err instanceof Error ? err.message : err)
   }

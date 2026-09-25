@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { Mail, Link2, Unplug, CheckCircle2, AlertTriangle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { getMailboxStatus, disconnectMailbox, type MailboxStatus } from './mailbox-actions'
+import { getMailboxStatus, disconnectMailbox, getAutoReply, saveAutoReply, type MailboxStatus, type AutoReplySettings } from './mailbox-actions'
 
 const CALLBACK_MESSAGES: Record<string, { ok: boolean; text: string }> = {
   connected: { ok: true, text: 'Mailbox connected. Approved follow-ups will be sent from it.' },
@@ -22,11 +22,25 @@ export function MailboxSettings() {
   const [error, setError] = useState<string | null>(null)
   const callback = CALLBACK_MESSAGES[params.get('gmail') ?? '']
 
+  const [reply, setReply] = useState<AutoReplySettings | null>(null)
+  const [replySaved, setReplySaved] = useState<string | null>(null)
+
   useEffect(() => {
     let active = true
     getMailboxStatus().then((s) => { if (active) setStatus(s) }).catch(() => {})
+    getAutoReply().then((r) => { if (active) setReply(r) }).catch(() => {})
     return () => { active = false }
   }, [])
+
+  async function handleSaveReply(next: AutoReplySettings) {
+    setBusy(true)
+    setError(null)
+    setReplySaved(null)
+    const res = await saveAutoReply({ enabled: next.enabled, subject: next.subject, body: next.body })
+    if (res.error) setError(res.error)
+    else setReplySaved(next.enabled ? 'Saved. New form enquiries get this reply within seconds.' : 'Saved. Instant reply is off.')
+    setBusy(false)
+  }
 
   async function handleDisconnect() {
     setBusy(true)
@@ -97,6 +111,55 @@ export function MailboxSettings() {
           )}
         </div>
       </div>
+
+      {/* Instant reply to form enquiries (speed to lead) */}
+      {reply && (
+        <div className="rounded-lg border bg-muted/20 p-4 space-y-3">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-sm font-medium">Instant reply to enquiries</p>
+              <p className="text-xs text-muted-foreground">
+                Sent from the mailbox above within seconds of a form enquiry, once per person per day. You approve this template
+                once instead of each email. Placeholders: {'{first_name}'}, {'{company}'}, {'{sender_name}'}.
+              </p>
+            </div>
+            <label className="flex shrink-0 items-center gap-2 text-xs font-medium">
+              <input
+                type="checkbox"
+                className="size-4 accent-primary"
+                checked={reply.enabled}
+                disabled={!reply.canManage || busy}
+                onChange={(e) => setReply({ ...reply, enabled: e.target.checked })}
+              />
+              {reply.enabled ? 'On' : 'Off'}
+            </label>
+          </div>
+          <input
+            aria-label="Instant reply subject"
+            className="h-9 w-full rounded-md border bg-background px-3 text-sm"
+            value={reply.subject}
+            disabled={!reply.canManage || busy}
+            onChange={(e) => setReply({ ...reply, subject: e.target.value })}
+          />
+          <textarea
+            aria-label="Instant reply message"
+            className="min-h-32 w-full rounded-md border bg-background p-3 text-sm leading-relaxed"
+            value={reply.body}
+            disabled={!reply.canManage || busy}
+            onChange={(e) => setReply({ ...reply, body: e.target.value })}
+          />
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-xs text-muted-foreground">
+              {!status?.connected && reply.enabled ? 'Nothing is sent until a mailbox is connected.' : replySaved ?? ''}
+            </p>
+            {reply.canManage && (
+              <Button size="sm" className="text-xs" disabled={busy} onClick={() => handleSaveReply(reply)}>
+                Save
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
