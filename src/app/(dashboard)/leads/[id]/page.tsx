@@ -49,6 +49,8 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
   const [aiRunning, setAiRunning] = useState(false)
   const [aiError, setAiError] = useState<string | null>(null)
   const [drafting, setDrafting] = useState(false)
+  const [briefOpen, setBriefOpen] = useState(false)
+  const [brief, setBrief] = useState('')
 
   async function load() {
     const result = await getLeadDetail(id)
@@ -131,22 +133,8 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
           <span className="rounded-full bg-muted px-2.5 py-1 text-xs font-bold">
             Score: {lead.lead_score}
           </span>
-          <Button
-            size="sm"
-            disabled={drafting}
-            onClick={async () => {
-              const brief = window.prompt('Anything the proposal must cover? (optional: e.g. "new site + booking automation, budget around 3k")')
-              if (brief === null) return
-              setDrafting(true)
-              const res = await draftProposal(id, brief || undefined)
-              setDrafting(false)
-              if (res.proposalId) {
-                if (res.error) toast({ variant: 'error', title: 'Draft created without AI', description: res.error })
-                router.push(`/proposals/${res.proposalId}`)
-              } else toast({ variant: 'error', title: 'Could not start a proposal', description: res.error })
-            }}
-          >
-            {drafting ? 'Starting…' : 'Draft proposal'}
+          <Button size="sm" disabled={drafting} onClick={() => setBriefOpen((o) => !o)}>
+            Draft proposal
           </Button>
           <Button
             variant="outline"
@@ -175,7 +163,44 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
       </div>
 
       <div className="grid gap-6 lg:grid-cols-3">
-        {/* Left column — main info */}
+        {briefOpen && (
+        <div className="space-y-3 rounded-xl border bg-card p-4">
+          <div>
+            <p className="text-sm font-medium">Draft a proposal</p>
+            <p className="text-xs text-muted-foreground">
+              The AI writes it from this lead&apos;s research, latest meeting notes and enquiry. You edit it and set the price before anything is shared.
+            </p>
+          </div>
+          <textarea
+            aria-label="Proposal brief"
+            className="min-h-20 w-full rounded-md border bg-background p-3 text-sm"
+            placeholder="Optional brief: what must it cover? e.g. new website + booking automation, budget around 3k"
+            value={brief}
+            onChange={(e) => setBrief(e.target.value)}
+            disabled={drafting}
+          />
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              disabled={drafting}
+              onClick={async () => {
+                setDrafting(true)
+                const res = await draftProposal(id, brief.trim() || undefined)
+                setDrafting(false)
+                if (res.proposalId) {
+                  if (res.error) toast({ variant: 'error', title: 'Draft created without AI', description: res.error })
+                  router.push(`/proposals/${res.proposalId}`)
+                } else toast({ variant: 'error', title: 'Could not start a proposal', description: res.error })
+              }}
+            >
+              {drafting ? 'Starting…' : 'Start draft'}
+            </Button>
+            <Button size="sm" variant="ghost" disabled={drafting} onClick={() => setBriefOpen(false)}>Cancel</Button>
+          </div>
+        </div>
+      )}
+
+      {/* Left column — main info */}
         <div className="space-y-6 lg:col-span-2">
           {/* Status */}
           <div className="rounded-lg border p-4">
