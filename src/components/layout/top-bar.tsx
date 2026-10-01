@@ -13,6 +13,7 @@ type Org = { id: string; name: string; slug: string; role: string }
 type Profile = { id: string; fullName: string | null; avatarUrl: string | null }
 
 const BREADCRUMB_LABELS: Record<string, string> = {
+  today: 'Today',
   dashboard: 'Dashboard',
   leads: 'Leads',
   pipeline: 'Pipeline',

@@ -7,6 +7,7 @@ import { useToast } from '@/components/ui/toast'
 import { OPEN_COMMAND_PALETTE_EVENT } from '@/components/layout/command-palette'
 import {
   LayoutDashboard,
+  CalendarCheck,
   Users,
   Kanban,
   Handshake,
@@ -30,6 +31,7 @@ import { useEffect, useRef, useState } from 'react'
 type Org = { id: string; name: string; slug: string; role: string }
 
 const MAIN_NAV = [
+  { label: 'Today', href: '/today', icon: CalendarCheck },
   { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
   { label: 'Leads', href: '/leads', icon: Users },
   { label: 'Pipeline', href: '/pipeline', icon: Kanban },
