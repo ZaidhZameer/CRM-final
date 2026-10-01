@@ -10,6 +10,9 @@ import { sendBookingNotificationEmail } from '@/lib/email'
 import { requestLeadEnrichment } from '@/lib/automation/events'
 import { findOpenLeadIdByEmail } from '@/lib/leads'
 
+// Pipeline stages before a meeting; a repeat booking may move a lead forward from these, never back.
+const EARLY_STAGES = ['imported', 'researched', 'qualified', 'contacted', 'replied']
+
 export type BookingConfig = {
   orgId: string
   orgName: string
@@ -297,16 +300,17 @@ export async function submitBooking(
       for (let attempt = 0; attempt < 2; attempt++) {
         const { data: current } = await service
           .from('leads')
-          .select('version')
+          .select('version, pipeline_stage, status')
           .eq('id', openLeadId)
           .eq('organization_id', orgId)
           .single()
         if (!current) break
+        // Only move forward: a lead already at proposal/negotiation keeps its stage and status.
+        const earlier = !current.pipeline_stage || EARLY_STAGES.includes(current.pipeline_stage)
         const { data: updated } = await service
           .from('leads')
           .update({
-            pipeline_stage: 'meeting_booked',
-            status: 'contacted',
+            ...(earlier ? { pipeline_stage: 'meeting_booked', status: current.status === 'new' ? 'contacted' : current.status } : {}),
             booking_answers_json: bookingAnswers,
             version: current.version + 1,
           })
