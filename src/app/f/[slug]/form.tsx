@@ -122,6 +122,13 @@ export function PublicLeadForm({
       >
         {submitting ? 'Submitting...' : 'Submit'}
       </button>
+
+      <p className="text-center text-xs text-muted-foreground">
+        We&apos;ll use your details to reply to your enquiry. We may also research publicly available information about your
+        business to make our reply relevant, and send a few follow-up emails about your enquiry. You can opt out at any time
+        by replying &apos;stop&apos; or emailing us. See our{' '}
+        <a href="/privacy" className="underline hover:text-foreground">privacy notice</a>.
+      </p>
     </form>
   )
 }
