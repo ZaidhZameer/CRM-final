@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { getBatchStatus, getFailedRows } from './actions'
 import Link from 'next/link'
+import { csvRow } from '@/lib/csv'
 
 type Props = {
   batchId: string
@@ -52,12 +53,15 @@ export function SummaryStep({ batchId, onReset }: Props) {
     })
     const keys = Array.from(allKeys)
 
-    const headerLine = [...keys, 'row_number', 'status', 'error_message'].join(',')
-    const dataLines = failedRows.map(r => {
-      const values = keys.map(k => `"${(r.raw_data_json[k] ?? '').replace(/"/g, '""')}"`)
-      values.push(String(r.row_number), r.status, `"${r.error_message.replace(/"/g, '""')}"`)
-      return values.join(',')
-    })
+    const headerLine = csvRow([...keys, 'row_number', 'status', 'error_message'])
+    const dataLines = failedRows.map(r =>
+      csvRow([
+        ...keys.map(k => r.raw_data_json[k] ?? ''),
+        r.row_number,
+        r.status,
+        r.error_message,
+      ])
+    )
 
     const csv = [headerLine, ...dataLines].join('\n')
     const blob = new Blob([csv], { type: 'text/csv' })
