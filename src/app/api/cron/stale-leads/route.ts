@@ -12,6 +12,11 @@ export async function GET(request: NextRequest) {
 
   const service = createServiceClient()
 
+  // UK GDPR retention: anonymise unconverted leads idle for 12+ months (see 20261001000001 migration).
+  const { data: anonymisedData, error: anonymiseError } = await service.rpc('anonymise_stale_leads', { p_months: 12 })
+  if (anonymiseError) console.error('[cron/stale-leads] anonymise failed', anonymiseError.message)
+  const anonymised = typeof anonymisedData === 'number' ? anonymisedData : 0
+
   // Find all active leads where:
   // 1. Status is NOT converted/lost (still in play)
   // 2. updated_at is older than 7 days
@@ -31,7 +36,7 @@ export async function GET(request: NextRequest) {
     .limit(500)
 
   if (!staleLeads || staleLeads.length === 0) {
-    return NextResponse.json({ message: 'No stale leads found', created: 0 })
+    return NextResponse.json({ message: 'No stale leads found', created: 0, anonymised })
   }
 
   let tasksCreated = 0
@@ -82,5 +87,6 @@ export async function GET(request: NextRequest) {
     message: `Checked ${staleLeads.length} stale leads, created ${tasksCreated} follow-up tasks`,
     checked: staleLeads.length,
     created: tasksCreated,
+    anonymised,
   })
 }
