@@ -429,6 +429,13 @@ export default function BookingPage() {
                 </span>
               ) : 'Book Meeting'}
             </button>
+
+            <p className="mt-3 text-center text-xs text-zinc-500">
+              We&apos;ll use your details to reply to your enquiry. We may also research publicly available information about
+              your business to make our reply relevant, and send a few follow-up emails about your enquiry. You can opt out at
+              any time by replying &apos;stop&apos; or emailing us. See our{' '}
+              <a href="/privacy" className="underline hover:text-zinc-300">privacy notice</a>.
+            </p>
           </div>
         )}
 
