@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { verifyCronSecret } from '@/lib/automation/secret'
+import { runReactivation } from '@/lib/reactivation'
 
 // Cron: Runs daily. Finds leads with no activity for 7+ days and auto-creates follow-up tasks.
-// GET /api/cron/stale-leads   (header: x-cron-secret)
+// On the first business day of each quarter (UK), or with ?reactivate=1, it also schedules ONE
+// approval-gated reactivation check-in for old leads that went quiet (see lib/reactivation.ts).
+// GET /api/cron/stale-leads[?reactivate=1]   (header: x-cron-secret)
 
 export async function GET(request: NextRequest) {
   if (!verifyCronSecret(request).ok) {
@@ -16,6 +19,13 @@ export async function GET(request: NextRequest) {
   const { data: anonymisedData, error: anonymiseError } = await service.rpc('anonymise_stale_leads', { p_months: 12 })
   if (anonymiseError) console.error('[cron/stale-leads] anonymise failed', anonymiseError.message)
   const anonymised = typeof anonymisedData === 'number' ? anonymisedData : 0
+
+  // Quarterly reactivation (after anonymisation, so anonymised leads are never candidates).
+  const reactivation = await runReactivation(service, new Date(), request.nextUrl.searchParams.get('reactivate') === '1')
+    .catch((err): Awaited<ReturnType<typeof runReactivation>> => {
+      console.error('[cron/stale-leads] reactivation failed', err instanceof Error ? err.message : err)
+      return { ran: true, error: 'unexpected failure' }
+    })
 
   // Find all active leads where:
   // 1. Status is NOT converted/lost (still in play)
@@ -36,7 +46,7 @@ export async function GET(request: NextRequest) {
     .limit(500)
 
   if (!staleLeads || staleLeads.length === 0) {
-    return NextResponse.json({ message: 'No stale leads found', created: 0, anonymised })
+    return NextResponse.json({ message: 'No stale leads found', created: 0, anonymised, reactivation })
   }
 
   let tasksCreated = 0
@@ -88,5 +98,6 @@ export async function GET(request: NextRequest) {
     checked: staleLeads.length,
     created: tasksCreated,
     anonymised,
+    reactivation,
   })
 }

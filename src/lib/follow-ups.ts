@@ -53,3 +53,44 @@ export function scheduledSendTime(from: Date, step: number, timeZone = FOLLOW_UP
     SEND_HOUR, SEND_MINUTE, timeZone
   )
 }
+
+/** The next Mon-Fri after `from` (London calendar) at 09:30 London time. Used for reactivation. */
+export function nextBusinessDaySendTime(from: Date, timeZone = FOLLOW_UP_TIMEZONE): Date {
+  const start = zonedParts(from, timeZone)
+  const cursor = new Date(Date.UTC(start.year, start.month - 1, start.day))
+  do {
+    cursor.setUTCDate(cursor.getUTCDate() + 1)
+  } while (cursor.getUTCDay() === 0 || cursor.getUTCDay() === 6)
+  return zonedTimeToUtc(
+    cursor.getUTCFullYear(), cursor.getUTCMonth() + 1, cursor.getUTCDate(),
+    SEND_HOUR, SEND_MINUTE, timeZone
+  )
+}
+
+/** Quarter-start months for the quarterly reactivation run. */
+const QUARTER_START_MONTHS = [1, 4, 7, 10]
+
+/** True when `now` (London date) is the first Mon-Fri of January, April, July or October. */
+export function isFirstBusinessDayOfQuarter(now: Date, timeZone = FOLLOW_UP_TIMEZONE): boolean {
+  const p = zonedParts(now, timeZone)
+  if (!QUARTER_START_MONTHS.includes(p.month)) return false
+  for (let day = 1; day <= p.day; day++) {
+    const dow = new Date(Date.UTC(p.year, p.month - 1, day)).getUTCDay()
+    if (dow !== 0 && dow !== 6) return day === p.day
+  }
+  return false
+}
+
+/**
+ * The follow-up row to schedule after a send, or null. Reactivation is a single touch: it never
+ * schedules a step 2. Regular follow-ups continue the cadence until MAX_AUTOMATED_STEPS.
+ */
+export function nextFollowUpAfterSend(
+  fu: { kind?: string | null; step: number },
+  sentAt: Date
+): { step: number; scheduled_for: string; reason: string } | null {
+  if (fu.kind === 'reactivation') return null
+  if (fu.step >= MAX_AUTOMATED_STEPS) return null
+  const next = scheduledSendTime(sentAt, fu.step + 1)
+  return next ? { step: fu.step + 1, scheduled_for: next.toISOString(), reason: `Step ${fu.step + 1}: no reply yet` } : null
+}

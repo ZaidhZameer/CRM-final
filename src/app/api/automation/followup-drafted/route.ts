@@ -68,7 +68,7 @@ export async function POST(request: NextRequest) {
 
   const { data: fu } = await service
     .from('follow_ups')
-    .select('id, organization_id, lead_id, step, status, scheduled_for, outreach_message_id')
+    .select('id, organization_id, lead_id, step, kind, status, scheduled_for, outreach_message_id')
     .eq('id', body.subject_id)
     .eq('organization_id', body.organization_id)
     .maybeSingle()
@@ -173,7 +173,7 @@ export async function POST(request: NextRequest) {
       tier: 'review',
       subject_type: 'lead',
       subject_id: fu.lead_id,
-      title: `Follow-up ${fu.step} to ${who}`,
+      title: fu.kind === 'reactivation' ? `Check-in (reactivation) to ${who}` : `Follow-up ${fu.step} to ${who}`,
       summary: p.reason,
       payload_json: { to: contact.email, subject: p.subject, body: p.body, outreach_message_id: message.id, follow_up_id: fu.id },
       expires_at: new Date(Math.max(Date.now(), new Date(fu.scheduled_for).getTime()) + APPROVAL_TTL_MS).toISOString(),
