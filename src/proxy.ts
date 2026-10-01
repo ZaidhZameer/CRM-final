@@ -1,6 +1,7 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 import { RATE_LIMITS } from '@/lib/rate-limit'
+import { buildCsp } from '@/lib/csp'
 
 function getIP(request: NextRequest): string {
   return (
@@ -109,6 +110,17 @@ export default async function proxy(request: NextRequest) {
   supabaseResponse.headers.set(
     'Permissions-Policy',
     'camera=(), microphone=(), geolocation=()'
+  )
+
+  // CSP in Report-Only mode: violations show in the browser console, nothing is blocked.
+  // Switch to 'Content-Security-Policy' once verified clean (see src/lib/csp.ts).
+  supabaseResponse.headers.set(
+    'Content-Security-Policy-Report-Only',
+    buildCsp({
+      supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL,
+      sentryDsn: process.env.NEXT_PUBLIC_SENTRY_DSN,
+      isDev: process.env.NODE_ENV === 'development',
+    })
   )
 
   return supabaseResponse
