@@ -8,6 +8,7 @@ import Link from 'next/link'
 import { User, Building2, Users, ChevronRight, FileText, Shield, Trash2, ScrollText } from 'lucide-react'
 import { BookingSettings } from './booking-settings'
 import { MailboxSettings } from './mailbox-settings'
+import { ApiTokenSettings } from './api-token-settings'
 import { AgencyProfileSettings } from './agency-profile-settings'
 
 const ROLE_STYLES: Record<string, string> = {
@@ -168,6 +169,9 @@ export default function SettingsPage() {
       <Suspense fallback={null}>
         <MailboxSettings />
       </Suspense>
+
+      {/* Connected agents (MCP access tokens) */}
+      <ApiTokenSettings />
 
       {/* Agency profile (feeds the AI proposal drafter) */}
       <AgencyProfileSettings />
