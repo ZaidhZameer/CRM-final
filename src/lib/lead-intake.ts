@@ -27,6 +27,7 @@ export async function createLeadFromSubmission(
       .from('lead_form_submissions')
       .update({ converted_lead_id: existingLeadId })
       .eq('id', submissionId)
+      .eq('organization_id', orgId)
     await service.from('activity_logs').insert({
       organization_id: orgId,
       actor_profile_id: actorProfileId,
@@ -99,6 +100,7 @@ export async function createLeadFromSubmission(
     .from('lead_form_submissions')
     .update({ converted_lead_id: lead.id })
     .eq('id', submissionId)
+    .eq('organization_id', orgId)
 
   await service.from('activity_logs').insert({
     organization_id: orgId,

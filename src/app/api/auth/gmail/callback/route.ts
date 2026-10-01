@@ -5,8 +5,12 @@ import { createServiceClient } from '@/lib/supabase/service'
 import { GMAIL_SCOPES, GMAIL_STATE_COOKIE, exchangeGmailCode, getGoogleEmail } from '@/lib/gmail'
 
 function sameState(a: string | undefined, b: string | null): boolean {
-  if (!a || !b || a.length !== b.length) return false
-  return timingSafeEqual(Buffer.from(a), Buffer.from(b))
+  if (!a || !b) return false
+  // Compare byte lengths, not string lengths: non-ASCII input of equal string length would
+  // otherwise make timingSafeEqual throw (500) instead of failing closed.
+  const x = Buffer.from(a)
+  const y = Buffer.from(b)
+  return x.length === y.length && timingSafeEqual(x, y)
 }
 
 export async function GET(request: NextRequest) {
