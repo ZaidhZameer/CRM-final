@@ -8,6 +8,7 @@ import Link from 'next/link'
 import { User, Building2, Users, ChevronRight, FileText, Shield, Trash2, ScrollText } from 'lucide-react'
 import { BookingSettings } from './booking-settings'
 import { MailboxSettings } from './mailbox-settings'
+import { AgencyProfileSettings } from './agency-profile-settings'
 
 const ROLE_STYLES: Record<string, string> = {
   owner: 'bg-purple-50 text-purple-600 ring-purple-500/20 dark:bg-purple-950/40 dark:text-purple-400',
@@ -167,6 +168,9 @@ export default function SettingsPage() {
       <Suspense fallback={null}>
         <MailboxSettings />
       </Suspense>
+
+      {/* Agency profile (feeds the AI proposal drafter) */}
+      <AgencyProfileSettings />
 
       {/* Team Members */}
       <div className="rounded-xl border bg-card p-6 space-y-4">
