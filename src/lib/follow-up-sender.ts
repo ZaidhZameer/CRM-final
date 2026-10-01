@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { FOLLOW_UP_TIMEZONE, MAX_AUTOMATED_STEPS, scheduledSendTime } from '@/lib/follow-ups'
+import { FOLLOW_UP_TIMEZONE, nextFollowUpAfterSend } from '@/lib/follow-ups'
 import { getMailAccessToken, sendGmail, type MailConnection } from '@/lib/gmail'
 
 // Sends approved follow-ups from the org's connected mailbox at their scheduled time.
@@ -116,7 +116,7 @@ export async function sendDueFollowUps(service: SupabaseClient, now = new Date()
 
   for (const m of (queued ?? []) as Queued[]) {
     const { data: fu } = m.follow_up_id
-      ? await service.from('follow_ups').select('id, status, step, scheduled_for').eq('id', m.follow_up_id).single()
+      ? await service.from('follow_ups').select('id, status, step, kind, scheduled_for').eq('id', m.follow_up_id).single()
       : { data: null }
     if (fu && new Date(fu.scheduled_for) > now) continue // approved early: wait for its slot
     if (fu && fu.status !== 'pending') {
@@ -190,17 +190,18 @@ export async function sendDueFollowUps(service: SupabaseClient, now = new Date()
       if (m.approval_id) await service.from('approvals').update({ status: 'executed' }).eq('id', m.approval_id)
       if (fu) {
         await service.from('follow_ups').update({ status: 'completed' }).eq('id', fu.id)
-        const next = fu.step < MAX_AUTOMATED_STEPS ? scheduledSendTime(now, fu.step + 1) : null
+        // A reactivation is a single touch: nextFollowUpAfterSend returns null for it.
+        const next = nextFollowUpAfterSend(fu, now)
         if (next) {
           // Interlocks may refuse (e.g. meeting booked since); that just ends the sequence.
           await service.from('follow_ups').insert({
             organization_id: m.organization_id,
             lead_id: m.lead_id,
-            scheduled_for: next.toISOString(),
-            reason: `Step ${fu.step + 1}: no reply yet`,
+            scheduled_for: next.scheduled_for,
+            reason: next.reason,
             status: 'pending',
             source: 'automation',
-            step: fu.step + 1,
+            step: next.step,
             decided_by: 'rule',
           })
         }

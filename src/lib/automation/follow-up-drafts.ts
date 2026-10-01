@@ -15,7 +15,7 @@ const MAX_DELAY_MS = 7 * 24 * 60 * 60_000 // the furthest the AI may push a step
 const MAX_PER_RUN = 10
 const TIMEOUT_MS = 8000
 
-type DueFollowUp = { id: string; organization_id: string; lead_id: string; step: number; scheduled_for: string }
+type DueFollowUp = { id: string; organization_id: string; lead_id: string; step: number; scheduled_for: string; kind?: string | null }
 
 /** Builds the draft request for one follow-up, or null when there is no one to email. */
 export async function buildDraftRequest(service: SupabaseClient, f: DueFollowUp): Promise<FollowUpDraftRequested | null> {
@@ -69,6 +69,7 @@ export async function buildDraftRequest(service: SupabaseClient, f: DueFollowUp)
   const pain = report?.pain_points_json as unknown
 
   const scheduled = new Date(f.scheduled_for)
+  const reactivation = f.kind === 'reactivation'
   return {
     event_id: randomUUID(),
     event_type: 'followup.draft.requested',
@@ -76,8 +77,9 @@ export async function buildDraftRequest(service: SupabaseClient, f: DueFollowUp)
     subject_id: f.id,
     payload: {
       lead_id: f.lead_id,
+      purpose: reactivation ? 'reactivation' : 'follow_up',
       step: f.step,
-      max_steps: MAX_AUTOMATED_STEPS,
+      max_steps: reactivation ? 1 : MAX_AUTOMATED_STEPS,
       scheduled_for: scheduled.toISOString(),
       latest_allowed: new Date(scheduled.getTime() + MAX_DELAY_MS).toISOString(),
       contact: {
@@ -107,7 +109,7 @@ export async function buildDraftRequest(service: SupabaseClient, f: DueFollowUp)
         company: org?.name ?? null,
       },
       // Unprompted touches never carry a booking link (spec decision 3).
-      rules: { booking_link_allowed: false, max_words: 120 },
+      rules: { booking_link_allowed: false, max_words: reactivation ? 100 : 120 },
     },
   }
 }
@@ -121,7 +123,7 @@ export async function requestDueFollowUpDrafts(service: SupabaseClient): Promise
 
   const { data: due } = await service
     .from('follow_ups')
-    .select('id, organization_id, lead_id, step, scheduled_for')
+    .select('id, organization_id, lead_id, step, scheduled_for, kind')
     .eq('status', 'pending')
     .eq('source', 'automation')
     .is('outreach_message_id', null)

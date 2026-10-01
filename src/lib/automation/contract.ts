@@ -87,6 +87,8 @@ export const followUpDraftRequestedSchema = envelope.extend({
   event_type: z.literal('followup.draft.requested'),
   payload: z.object({
     lead_id: z.uuid(),
+    // 'reactivation' = a single friendly check-in to a lead that went quiet (max_steps is 1).
+    purpose: z.enum(['follow_up', 'reactivation']).default('follow_up'),
     step: z.number().int().min(1).max(10),
     max_steps: z.number().int().min(1).max(10),
     scheduled_for: z.string().max(40),
