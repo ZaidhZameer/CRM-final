@@ -8,6 +8,7 @@ import {
 } from '@/lib/google-calendar'
 import { sendBookingNotificationEmail } from '@/lib/email'
 import { requestLeadEnrichment } from '@/lib/automation/events'
+import { findOpenLeadIdByEmail } from '@/lib/leads'
 
 export type BookingConfig = {
   orgId: string
@@ -276,28 +277,63 @@ export async function submitBooking(
       contactId = newContact?.id ?? null
     }
 
-    const { data: lead } = await service
-      .from('leads')
-      .insert({
-        organization_id: orgId,
-        company_id: companyId,
-        contact_id: contactId,
-        source: 'booking_page',
-        status: 'contacted',
-        pipeline_stage: 'meeting_booked',
-        lead_quality: 'warm',
-        lead_score: 50,
-        booking_answers_json: {
-          name: formData.name,
-          email: formData.email,
-          company: formData.company,
-          phone: formData.phone ?? null,
-          notes: formData.notes ?? null,
-          booked_at: new Date().toISOString(),
-        },
-      })
-      .select('id')
-      .single()
+    const bookingAnswers = {
+      name: formData.name,
+      email: formData.email,
+      company: formData.company,
+      phone: formData.phone ?? null,
+      notes: formData.notes ?? null,
+      booked_at: new Date().toISOString(),
+    }
+
+    // Repeat booker with an open lead: move that lead to meeting_booked instead of
+    // creating a duplicate. Version-guarded like other lead updates; retry once on a race.
+    let lead: { id: string } | null = null
+    let reusedLead = false
+    const openLeadId = await findOpenLeadIdByEmail(service, orgId, formData.email)
+    if (openLeadId) {
+      lead = { id: openLeadId }
+      reusedLead = true
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const { data: current } = await service
+          .from('leads')
+          .select('version')
+          .eq('id', openLeadId)
+          .eq('organization_id', orgId)
+          .single()
+        if (!current) break
+        const { data: updated } = await service
+          .from('leads')
+          .update({
+            pipeline_stage: 'meeting_booked',
+            status: 'contacted',
+            booking_answers_json: bookingAnswers,
+            version: current.version + 1,
+          })
+          .eq('id', openLeadId)
+          .eq('organization_id', orgId)
+          .eq('version', current.version)
+          .select('id')
+        if (updated?.length) break
+      }
+    } else {
+      const { data: newLead } = await service
+        .from('leads')
+        .insert({
+          organization_id: orgId,
+          company_id: companyId,
+          contact_id: contactId,
+          source: 'booking_page',
+          status: 'contacted',
+          pipeline_stage: 'meeting_booked',
+          lead_quality: 'warm',
+          lead_score: 50,
+          booking_answers_json: bookingAnswers,
+        })
+        .select('id')
+        .single()
+      lead = newLead
+    }
 
     if (lead) {
       await service.from('meetings').insert({
@@ -317,9 +353,10 @@ export async function submitBooking(
         actor_profile_id: settings.owner_profile_id,
         entity_type: 'lead',
         entity_id: lead.id,
-        action: 'created',
+        action: reusedLead ? 'updated' : 'created',
         after_json: {
           source: 'booking_page',
+          ...(reusedLead ? { repeat_booking: true } : {}),
           pipeline_stage: 'meeting_booked',
           company: formData.company,
           contact: formData.name,
@@ -327,14 +364,17 @@ export async function submitBooking(
         },
       })
 
-      // Hand off to n8n for enrichment. Non-blocking; no-ops if unconfigured.
-      requestLeadEnrichment({
-        organizationId: orgId,
-        leadId: lead.id,
-        fullName: formData.name,
-        companyName: formData.company,
-        website: null,
-      })
+      // Hand off to n8n for enrichment (new leads only; a reused lead was already researched).
+      // Non-blocking; no-ops if unconfigured.
+      if (!reusedLead) {
+        requestLeadEnrichment({
+          organizationId: orgId,
+          leadId: lead.id,
+          fullName: formData.name,
+          companyName: formData.company,
+          website: null,
+        })
+      }
     }
 
     let organizerEmail: string | null = tokenRow.calendar_email ?? null

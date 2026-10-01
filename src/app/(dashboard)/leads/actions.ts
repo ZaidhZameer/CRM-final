@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { RATE_LIMITS } from '@/lib/rate-limit'
 import { validate, uuidSchema } from '@/lib/validate'
+import { csvRow } from '@/lib/csv'
 
 export type LeadRow = {
   id: string
@@ -236,17 +237,10 @@ export async function exportLeadsCSV(params: {
       r.next_follow_up_at ? new Date(r.next_follow_up_at).toLocaleDateString() : '',
       new Date(r.created_at).toLocaleDateString(),
       new Date(r.updated_at).toLocaleDateString(),
-    ].map(v => {
-      const s = String(v)
-      // Escape CSV: quote fields containing commas, quotes, or newlines
-      if (s.includes(',') || s.includes('"') || s.includes('\n')) {
-        return `"${s.replace(/"/g, '""')}"`
-      }
-      return s
-    })
+    ]
   })
 
-  const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n')
+  const csv = [csvRow(headers), ...rows.map(csvRow)].join('\n')
 
   // Log export activity
   await service.from('activity_logs').insert({

@@ -31,11 +31,8 @@ export async function submitPublicForm(
   const sanitized: Record<string, string> = {}
   for (const [key, val] of Object.entries(data)) {
     const trimmed = val.trim()
-    if (trimmed) {
-      // Formula injection protection
-      const FORMULA_CHARS = ['=', '+', '-', '@', '\t', '\r']
-      sanitized[key] = FORMULA_CHARS.some(c => trimmed.startsWith(c)) ? "'" + trimmed : trimmed
-    }
+    // Stored as typed (e.g. +44 phone numbers); CSV formula safety is applied on export.
+    if (trimmed) sanitized[key] = trimmed
   }
 
   if (Object.keys(sanitized).length === 0) {
