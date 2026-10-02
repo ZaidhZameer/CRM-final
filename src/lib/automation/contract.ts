@@ -177,6 +177,37 @@ export const proposalDraftedSchema = envelope.extend({
   }),
 })
 
+// ---- Lead import (the official door for leads from any source) ----
+// Spec: Obsidian SALES-OS/INTERNAL/FLOWLEAD_LEAD_SOURCING_SPEC_2026-10-01.md (architecture decision).
+// subject_id is unused here; organization_id says whose workspace the leads join. `source` is namespaced
+// server-side ("import_<source>"), and a lead is only a PECR corporate subscriber when the sender
+// asserts is_limited_company.
+
+export const leadsImportSchema = z.object({
+  event_id: z.uuid(),
+  event_type: z.literal('leads.import'),
+  organization_id: z.uuid(),
+  payload: z.object({
+    source: z.string().min(2).max(40),
+    leads: z
+      .array(
+        z.object({
+          company_name: z.string().min(1).max(200),
+          company_number: z.string().max(20).nullish(),
+          website: z.string().max(300).nullish(),
+          address: z.string().max(300).nullish(),
+          industry: z.string().max(200).nullish(),
+          is_limited_company: z.boolean().optional(),
+          contact: z
+            .object({ full_name: z.string().max(200).nullish(), job_title: z.string().max(200).nullish(), email: z.string().max(320).nullish() })
+            .nullish(),
+        })
+      )
+      .min(1)
+      .max(100),
+  }),
+})
+
 export type ProposalDraftRequested = z.infer<typeof proposalDraftRequestedSchema>
 export type ProposalDrafted = z.infer<typeof proposalDraftedSchema>
 
@@ -190,4 +221,5 @@ export const CONTRACTS = {
   'followup.drafted': followUpDraftedSchema,
   'proposal.draft.requested': proposalDraftRequestedSchema,
   'proposal.drafted': proposalDraftedSchema,
+  'leads.import': leadsImportSchema,
 } as const

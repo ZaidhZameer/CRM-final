@@ -63,7 +63,7 @@ describe.skipIf(!enabled)('automation integration (local stack)', () => {
 
   afterAll(async () => {
     if (!orgId) return
-    for (const t of ['sourced_companies', 'sourcing_settings', 'proposals', 'auto_replies', 'tasks', 'mail_connections', 'approvals', 'outreach_messages', 'jobs', 'follow_ups', 'research_reports', 'ai_usage_log', 'automation_events', 'activity_logs', 'leads', 'contacts', 'companies']) {
+    for (const t of ['contact_suppressions', 'sourced_companies', 'sourcing_settings', 'proposals', 'auto_replies', 'tasks', 'mail_connections', 'approvals', 'outreach_messages', 'jobs', 'follow_ups', 'research_reports', 'ai_usage_log', 'automation_events', 'activity_logs', 'leads', 'contacts', 'companies']) {
       await db.from(t).delete().eq('organization_id', orgId)
     }
     await db.from('memberships').delete().eq('organization_id', orgId)
@@ -373,6 +373,64 @@ describe.skipIf(!enabled)('automation integration (local stack)', () => {
     await db.from('sourcing_settings').upsert({ organization_id: orgId, enabled: true, sic_codes: ['86230'], daily_cap: 5 })
     const res = await runSourcingForOrg(db, orgId, { search: async () => ({ ok: false as const, error: { kind: 'missing_key' as const, message: 'no key' } }), enrich: () => null })
     expect(res).toEqual({ ran: false, reason: 'missing_key' })
+  })
+
+  // ---- lead import API ----------------------------------------------------------
+  const postImport = (body: Record<string, unknown>, secret: string | null = env.AUTOMATION_SHARED_SECRET) =>
+    fetch(`${APP}/api/automation/leads-import`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...(secret ? { 'x-flowlead-secret': secret } : {}) },
+      body: JSON.stringify({ event_type: 'leads.import', organization_id: orgId, ...body }),
+    })
+  const importBody = (leads: unknown[], source = 'cqc', eventId: string = randomUUID()) => ({ event_id: eventId, payload: { source, leads } })
+
+  it('the import API rejects a missing or wrong secret and a bad body', async () => {
+    expect((await postImport(importBody([{ company_name: 'X Ltd' }]), null)).status).toBe(401)
+    expect((await postImport(importBody([{ company_name: 'X Ltd' }]), 'wrong-secret-wrong-secret-wrong')).status).toBe(401)
+    expect((await postImport({ event_id: randomUUID(), payload: { source: 'cqc', leads: [] } })).status).toBe(422)
+  })
+
+  it('import creates namespaced leads; the PECR flag is set only when the sender asserts a limited company', async () => {
+    const res = await postImport(importBody([
+      { company_name: 'IMPORT ONE DENTAL LTD', company_number: '09999991', is_limited_company: true, website: 'importone.example/contact', contact: { full_name: 'Ann Lee', email: 'Ann@ImportOne.example' } },
+      { company_name: 'Import Two Sole Trader', contact: { full_name: 'Bob', email: 'bob@importtwo.example' } },
+      { company_name: 'Bad Email Ltd', contact: { email: 'not-an-email' } },
+    ]))
+    const json = await res.json()
+    expect(json).toMatchObject({ ok: true, created: 2, rejected: 1 })
+    const { data: leads } = await db.from('leads').select('source, is_corporate_subscriber, companies(name, website), contacts(email)').eq('organization_id', orgId).like('source', 'import_cqc')
+    const byName = Object.fromEntries(leads!.map((l) => [(l.companies as unknown as { name: string }).name, l]))
+    expect(byName['Import One Dental Ltd']).toMatchObject({ is_corporate_subscriber: true })
+    expect((byName['Import One Dental Ltd'].companies as unknown as { website: string }).website).toBe('https://importone.example')
+    expect((byName['Import One Dental Ltd'].contacts as unknown as { email: string }).email).toBe('ann@importone.example')
+    expect(byName['Import Two Sole Trader']).toMatchObject({ is_corporate_subscriber: false })
+  })
+
+  it('claiming the source "web_form" does not bypass the PECR eligibility check', async () => {
+    const json = await (await postImport(importBody([{ company_name: 'Sneaky Sole Trader', contact: { full_name: 'S', email: 'sneaky@sneaky.example' } }], 'web_form'))).json()
+    const leadId = json.results[0].lead_id as string
+    const { data: lead } = await db.from('leads').select('source').eq('id', leadId).single()
+    expect(lead!.source).toBe('import_web_form') // never the trusted bare 'web_form'
+    const { error } = await db.from('follow_ups').insert({ organization_id: orgId, lead_id: leadId, scheduled_for: new Date(Date.now() + 86_400_000).toISOString(), source: 'automation' })
+    expect(error?.message).toContain('not_eligible_pecr')
+  })
+
+  it('import dedupes by company number, email and name, and a replayed event is a no-op', async () => {
+    const eventId = randomUUID()
+    const first = await (await postImport(importBody([{ company_name: 'Dedupe Test Dental Ltd', company_number: '09999992', is_limited_company: true, contact: { email: 'dd@dedupe.example' } }], 'cqc', eventId))).json()
+    expect(first.created).toBe(1)
+    const again = await (await postImport(importBody([{ company_name: 'Dedupe Test Dental Ltd', company_number: '09999992' }, { company_name: 'Other Name', contact: { email: 'dd@dedupe.example' } }, { company_name: 'DEDUPE TEST DENTAL LIMITED' }]))).json()
+    expect(again.results.map((r: { reason?: string }) => r.reason)).toEqual(['company_number', 'email', 'company_name'])
+    const replay = await (await postImport(importBody([{ company_name: 'Whatever Ltd' }], 'cqc', eventId))).json()
+    expect(replay).toMatchObject({ ok: true, duplicate: true })
+  })
+
+  it('a suppressed (opted-out) email imports as do-not-contact', async () => {
+    const { createHash } = await import('node:crypto')
+    await db.from('contact_suppressions').insert({ organization_id: orgId, email_sha256: createHash('sha256').update('optout@suppressed.example').digest('hex'), reason: 'test' })
+    const json = await (await postImport(importBody([{ company_name: 'Suppressed Co Ltd', is_limited_company: true, contact: { email: 'OptOut@Suppressed.example' } }]))).json()
+    const { data: lead } = await db.from('leads').select('do_not_contact').eq('id', json.results[0].lead_id).single()
+    expect(lead!.do_not_contact).toBe(true)
   })
 
   it('findOpenLeadIdByEmail returns the open lead and ignores lost or deleted ones', async () => {

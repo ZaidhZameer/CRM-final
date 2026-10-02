@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { getOfficers, searchCompanies, type SourcedCompany } from './companies-house'
 import { displayCompanyName, normaliseCompanyName } from './names'
 import { requestLeadEnrichment } from '@/lib/automation/events'
+import { createLeadFromSource } from './create-lead'
 
 // Daily lead sourcing from Companies House (spec: FLOWLEAD_LEAD_SOURCING_SPEC_2026-10-01.md).
 // Everything is opt-in per org (sourcing_settings.enabled, default OFF) and capped per day.
@@ -121,52 +122,18 @@ export async function runSourcingForOrg(service: SupabaseClient, orgId: string, 
   return { ran: true, found: found.data.length, created, skippedDuplicate, ...(stoppedEarly ? { stoppedEarly } : {}) }
 }
 
-async function createSourcedLead(
-  service: SupabaseClient,
-  orgId: string,
-  campaign: string,
-  c: SourcedCompany
-): Promise<string | null> {
-  const name = displayCompanyName(c.name)
-  const { data: company } = await service
-    .from('companies')
-    .insert({ organization_id: orgId, name, location: c.address || null, industry: c.sic_codes.join(', ') || null })
-    .select('id')
-    .single()
-  if (!company) return null
-
-  const lead = c.directors[0]
-  const { data: contact } = lead
-    ? await service
-        .from('contacts')
-        .insert({ organization_id: orgId, company_id: company.id, full_name: lead.name, job_title: lead.role })
-        .select('id')
-        .single()
-    : { data: null }
-
-  const { data: row } = await service
-    .from('leads')
-    .insert({
-      organization_id: orgId,
-      company_id: company.id,
-      contact_id: contact?.id ?? null,
-      source: campaign === 'agencies' ? 'companies_house_agencies' : 'companies_house',
-      status: 'new',
-      // Every Companies House result is a limited company or LLP: a PECR corporate subscriber.
-      is_corporate_subscriber: true,
-    })
-    .select('id')
-    .single()
-  if (!row) return null
-
-  await service.from('activity_logs').insert({
-    organization_id: orgId,
-    action: 'created',
-    entity_type: 'lead',
-    entity_id: row.id,
-    after_json: { source: 'companies_house', company_number: c.company_number, campaign },
+async function createSourcedLead(service: SupabaseClient, orgId: string, campaign: string, c: SourcedCompany): Promise<string | null> {
+  const first = c.directors[0]
+  return createLeadFromSource(service, orgId, {
+    source: campaign === 'agencies' ? 'companies_house_agencies' : 'companies_house',
+    // Every Companies House result is a limited company or LLP: a PECR corporate subscriber.
+    isLimitedCompany: true,
+    companyName: displayCompanyName(c.name),
+    location: c.address || null,
+    industry: c.sic_codes.join(', ') || null,
+    contact: first ? { fullName: first.name, jobTitle: first.role } : null,
+    activity: { company_number: c.company_number, campaign },
   })
-  return row.id
 }
 
 /** Runs sourcing for every org that switched it on. One org failing never stops the others. */
