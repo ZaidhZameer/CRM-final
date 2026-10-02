@@ -3,6 +3,7 @@ import { createServiceClient } from '@/lib/supabase/service'
 import { verifyCronSecret } from '@/lib/automation/secret'
 import { runReactivation } from '@/lib/reactivation'
 import { runSourcingForAllOrgs } from '@/lib/sourcing/run'
+import { runContactDiscovery } from '@/lib/sourcing/discover-run'
 
 // Cron: Runs daily. Finds leads with no activity for 7+ days and auto-creates follow-up tasks.
 // On the first business day of each quarter (UK), or with ?reactivate=1, it also schedules ONE
@@ -33,6 +34,13 @@ export async function GET(request: NextRequest) {
     console.error('[cron/stale-leads] sourcing failed', err instanceof Error ? err.message : err)
     return {}
   })
+
+  // Contact discovery for sourced/imported leads with a website but no email (lead_finder agent, level 1+).
+  const discovery = await runContactDiscovery(service).catch((err) => {
+    console.error('[cron/stale-leads] discovery failed', err instanceof Error ? err.message : err)
+    return {}
+  })
+  void discovery
 
   // Find all active leads where:
   // 1. Status is NOT converted/lost (still in play)
