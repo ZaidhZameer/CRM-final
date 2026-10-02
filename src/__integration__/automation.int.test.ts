@@ -9,6 +9,7 @@ import { findOpenLeadIdByEmail } from '@/lib/leads'
 import { queueApprovedFollowUp, closeRejectedFollowUp, sendDueFollowUps } from '@/lib/follow-up-sender'
 import { applyReply } from '@/lib/reply-watcher'
 import { sendEnquiryAcknowledgement } from '@/lib/auto-reply'
+import { runSourcingForOrg } from '@/lib/sourcing/run'
 
 const enabled = process.env.FLOWLEAD_INTEGRATION === '1'
 // Minimal .env.local reader (KEY=value, optional quotes); values are never logged.
@@ -62,7 +63,7 @@ describe.skipIf(!enabled)('automation integration (local stack)', () => {
 
   afterAll(async () => {
     if (!orgId) return
-    for (const t of ['proposals', 'auto_replies', 'tasks', 'mail_connections', 'approvals', 'outreach_messages', 'jobs', 'follow_ups', 'research_reports', 'ai_usage_log', 'automation_events', 'activity_logs', 'leads', 'contacts', 'companies']) {
+    for (const t of ['sourced_companies', 'sourcing_settings', 'proposals', 'auto_replies', 'tasks', 'mail_connections', 'approvals', 'outreach_messages', 'jobs', 'follow_ups', 'research_reports', 'ai_usage_log', 'automation_events', 'activity_logs', 'leads', 'contacts', 'companies']) {
       await db.from(t).delete().eq('organization_id', orgId)
     }
     await db.from('memberships').delete().eq('organization_id', orgId)
@@ -324,6 +325,54 @@ describe.skipIf(!enabled)('automation integration (local stack)', () => {
 
     const { data: appr } = await db.from('approvals').select('tier, action_type, status').eq('id', after!.approval_id).single()
     expect(appr).toEqual({ tier: 'always_human', action_type: 'send_proposal', status: 'pending' })
+  })
+
+  // ---- lead sourcing (fake Companies House, local DB) ------------------------------
+  const fakeCompany = (n: string, name: string) => ({ company_number: n, name, sic_codes: ['86230'], incorporated_on: '2021-03-04', address: '1 High St, Leeds', directors: [] })
+  const sourcingDeps = (companies: ReturnType<typeof fakeCompany>[]) => ({
+    search: async () => ({ ok: true as const, data: companies }),
+    officers: async () => ({ ok: true as const, data: [{ name: 'Maya Patel', role: 'director', appointed_on: '2021-03-04' }] }),
+    enrich: () => null,
+  })
+
+  it('sourcing does nothing until switched on, and never without a SIC code', async () => {
+    const deps = sourcingDeps([fakeCompany('00000001', 'ALPHA DENTAL LTD')])
+    expect(await runSourcingForOrg(db, orgId, deps)).toEqual({ ran: false, reason: 'disabled' })
+    await db.from('sourcing_settings').upsert({ organization_id: orgId, enabled: true, sic_codes: [] })
+    expect(await runSourcingForOrg(db, orgId, deps)).toEqual({ ran: false, reason: 'no_sic_codes' })
+  })
+
+  it('creates corporate-subscriber leads, dedupes across runs and by name, and honours the daily cap', async () => {
+    await db.from('companies').insert({ organization_id: orgId, name: 'Existing Dental Limited' })
+    await db.from('sourcing_settings').upsert({ organization_id: orgId, enabled: true, sic_codes: ['86230'], daily_cap: 2 })
+    const list = [
+      fakeCompany('00000010', 'EXISTING DENTAL LTD'), // already a company here (name match)
+      fakeCompany('00000011', 'BRAVO DENTAL LTD'),
+      fakeCompany('00000012', 'CHARLIE DENTAL LTD'),
+      fakeCompany('00000013', 'DELTA DENTAL LTD'),
+    ]
+    const first = await runSourcingForOrg(db, orgId, sourcingDeps(list))
+    expect(first).toMatchObject({ ran: true, created: 2, skippedDuplicate: 1 })
+
+    const { data: leads } = await db.from('leads').select('source, is_corporate_subscriber, status, companies(name), contacts(full_name)').eq('organization_id', orgId).eq('source', 'companies_house')
+    expect(leads).toHaveLength(2)
+    expect(leads!.every((l) => l.is_corporate_subscriber && l.status === 'new')).toBe(true)
+    expect(leads!.map((l) => (l.companies as unknown as { name: string }).name).sort()).toEqual(['Bravo Dental Ltd', 'Charlie Dental Ltd'])
+
+    // Second run the same day: cap reached, nothing new.
+    expect(await runSourcingForOrg(db, orgId, sourcingDeps(list))).toEqual({ ran: false, reason: 'daily_cap_reached' })
+    // Raise the cap: the rest is picked up once, with no repeats.
+    await db.from('sourcing_settings').update({ daily_cap: 10 }).eq('organization_id', orgId)
+    const third = await runSourcingForOrg(db, orgId, sourcingDeps(list))
+    expect(third).toMatchObject({ ran: true, created: 1 })
+    const { count } = await db.from('sourced_companies').select('id', { count: 'exact', head: true }).eq('organization_id', orgId)
+    expect(count).toBe(4)
+  })
+
+  it('a missing Companies House key is reported, not thrown', async () => {
+    await db.from('sourcing_settings').upsert({ organization_id: orgId, enabled: true, sic_codes: ['86230'], daily_cap: 5 })
+    const res = await runSourcingForOrg(db, orgId, { search: async () => ({ ok: false as const, error: { kind: 'missing_key' as const, message: 'no key' } }), enrich: () => null })
+    expect(res).toEqual({ ran: false, reason: 'missing_key' })
   })
 
   it('findOpenLeadIdByEmail returns the open lead and ignores lost or deleted ones', async () => {
