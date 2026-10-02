@@ -24,6 +24,7 @@ const limiters = {
   api: createLimiter('api', 120, 60),
   write: createLimiter('write', 60, 60),
   form: createLimiter('form', 30, 60),
+  mcp: createLimiter('mcp', 60, 60),
 }
 
 async function check(
@@ -42,4 +43,6 @@ export const RATE_LIMITS = {
   api: (key: string) => check(limiters.api, key),
   write: (key: string) => check(limiters.write, key),
   form: (key: string) => check(limiters.form, key),
+  /** MCP tool traffic, keyed by api token id. */
+  mcp: (key: string) => check(limiters.mcp, key),
 }
