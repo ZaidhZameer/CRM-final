@@ -4,7 +4,7 @@ import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { RATE_LIMITS } from '@/lib/rate-limit'
-import { AGENT_KEYS, clampLevel, isAgentKey, type AgentKey } from '@/lib/agents'
+import { AGENTS, AGENT_KEYS, clampLevel, isAgentKey, type AgentKey } from '@/lib/agents'
 
 // "Agents" settings. Owner/admin may change; tables are service-role only (migration 20261002000003).
 
@@ -48,6 +48,7 @@ export async function setAgentLevel(agent: string, level: number): Promise<{ err
   const g = await guard()
   if ('error' in g) return { error: g.error }
   if (!isAgentKey(agent)) return { error: 'Unknown agent' }
+  if (!AGENTS[agent].live) return { error: 'This agent is not active yet.' }
   const { error } = await g.c.service.from('agent_settings').upsert(
     { organization_id: g.orgId, agent, autonomy_level: clampLevel(agent, level), updated_by: g.c.profileId, updated_at: new Date().toISOString() },
     { onConflict: 'organization_id,agent' }

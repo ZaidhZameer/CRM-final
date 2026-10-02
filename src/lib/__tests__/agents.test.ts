@@ -17,6 +17,9 @@ describe('agent registry', () => {
   it('no agent can exceed level 2', () => {
     for (const a of Object.values(AGENTS)) expect(a.maxLevel).toBeLessThanOrEqual(2)
   })
+  it('only the lead finder is live; the rest are placeholders', () => {
+    expect(Object.entries(AGENTS).filter(([, a]) => a.live).map(([k]) => k)).toEqual(['lead_finder'])
+  })
   it('defaults to off, and the kill switch beats any level', () => {
     expect(levelAllows(false, undefined, 'seo', 1)).toBe(false)
     expect(levelAllows(false, 1, 'seo', 1)).toBe(true)

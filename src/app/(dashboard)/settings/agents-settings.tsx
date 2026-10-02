@@ -56,8 +56,8 @@ export function AgentsSettings() {
       <ul className="divide-y rounded-lg border">
         {AGENT_KEYS.map((k: AgentKey) => (
           <li key={k} className="flex items-center justify-between gap-4 p-3">
-            <span className="text-sm font-medium">{AGENTS[k].label}</span>
-            <select className="h-9 rounded-md border bg-background px-3 text-sm disabled:opacity-60" disabled={disabled} value={card.levels[k]}
+            <span className="text-sm font-medium">{AGENTS[k].label}{!AGENTS[k].live && <span className="ml-2 text-xs font-normal text-muted-foreground">Not active yet</span>}</span>
+            <select className="h-9 rounded-md border bg-background px-3 text-sm disabled:opacity-60" disabled={disabled || !AGENTS[k].live} value={card.levels[k]}
               aria-label={`${AGENTS[k].label} level`}
               onChange={(e) => { const n = Number(e.target.value); run(() => setAgentLevel(k, n), (c) => ({ ...c, levels: { ...c.levels, [k]: n } })) }}>
               {LEVEL_LABEL.slice(0, AGENTS[k].maxLevel + 1).map((l, i) => <option key={l} value={i}>{l}</option>)}

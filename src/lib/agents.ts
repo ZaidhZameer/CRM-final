@@ -7,13 +7,15 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 
 export type AutonomyLevel = 0 | 1 | 2
 
+// live: true only when the agent's code actually checks this setting. The rest are placeholders
+// shown as "Not active yet" so the screen never promises control that does not exist.
 export const AGENTS = {
-  lead_finder: { label: 'Lead finder', maxLevel: 2 },
-  follow_up: { label: 'Follow-up writer', maxLevel: 1 },
-  proposal: { label: 'Proposal writer', maxLevel: 1 },
-  chief_of_staff: { label: 'Chief of staff (daily digest)', maxLevel: 1 },
-  marketing: { label: 'Marketing briefs', maxLevel: 1 },
-  seo: { label: 'SEO insights', maxLevel: 1 },
+  lead_finder: { label: 'Lead finder', maxLevel: 2, live: true },
+  follow_up: { label: 'Follow-up writer', maxLevel: 1, live: false },
+  proposal: { label: 'Proposal writer', maxLevel: 1, live: false },
+  chief_of_staff: { label: 'Chief of staff (the Today page)', maxLevel: 1, live: false },
+  marketing: { label: 'Marketing (content themes tool)', maxLevel: 1, live: false },
+  seo: { label: 'SEO', maxLevel: 1, live: false },
 } as const
 
 export type AgentKey = keyof typeof AGENTS
