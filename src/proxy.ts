@@ -13,10 +13,11 @@ function getIP(request: NextRequest): string {
 
 // '/book/' is the public booking page prospects open; '/p/' is a shared proposal link. '/api/automation/' and '/api/cron/'
 // are machine-to-machine: they have no session and authenticate with their own
-// fail-closed shared-secret header instead.
+// fail-closed shared-secret header instead. '/api/mcp' is the agent endpoint: no session cookie,
+// every request carries a personal access token (Authorization: Bearer flk_...) verified in the handler.
 const PUBLIC_ROUTES = [
   '/sign-in', '/sign-up', '/auth/callback', '/auth/confirm', '/reset-password', '/f/', '/privacy', '/terms',
-  '/book/', '/api/automation/', '/api/cron/', '/p/',
+  '/book/', '/api/automation/', '/api/cron/', '/api/mcp', '/p/',
 ]
 
 export default async function proxy(request: NextRequest) {
