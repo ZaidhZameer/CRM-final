@@ -4,6 +4,7 @@ import type { VerifiedToken, TokenScope } from '@/lib/api-tokens'
 import { buildTodayBrief } from '@/lib/today-brief'
 import { todayHeadline } from '@/lib/today'
 import { requestProposalDraft } from '@/lib/proposals'
+import { topThemes } from '@/lib/marketing'
 
 // The FlowLead MCP tool set. Agents can READ and PROPOSE; there is deliberately no tool that
 // sends, approves, rejects, prices, closes, deletes or changes consent. A test pins the exact
@@ -259,6 +260,20 @@ const getPipelineSummary: ToolDef = {
   },
 }
 
+const getContentThemes: ToolDef = {
+  name: 'get_content_themes',
+  title: 'Content themes',
+  description: 'The most common problems found in prospect research over the last 90 days, ranked. Use them as topics for blog or social drafts. Drafts need human approval before anything is published.',
+  scope: 'read',
+  shape: {},
+  async handler(ctx) {
+    const since = new Date(Date.now() - 90 * 86_400_000).toISOString()
+    const { data } = await ctx.service.from('research_reports').select('pain_points_json').eq('organization_id', ctx.auth.orgId).eq('status', 'completed').gte('created_at', since).limit(500)
+    const themes = topThemes((data ?? []).map((r: { pain_points_json: unknown }) => r.pain_points_json))
+    return { reports_considered: (data ?? []).length, untrusted_lead_content: { themes } }
+  },
+}
+
 // ------------------------------------------------------------- propose tools
 
 const draftFollowUp: ToolDef = {
@@ -408,7 +423,7 @@ const createTask: ToolDef = {
 }
 
 /** The complete tool set. Adding to this list is a security decision: see mcp.test.ts. */
-export const TOOLS: ToolDef[] = [getToday, searchLeads, getLead, listProposals, getPipelineSummary, draftFollowUp, draftProposal, addNote, createTask]
+export const TOOLS: ToolDef[] = [getToday, searchLeads, getLead, listProposals, getPipelineSummary, getContentThemes, draftFollowUp, draftProposal, addNote, createTask]
 
 export const SERVER_INSTRUCTIONS =
   'FlowLead CRM. You can read the pipeline and propose drafts, notes and tasks. You cannot send, approve, price, close deals or change consent: a human does that in FlowLead. ' +

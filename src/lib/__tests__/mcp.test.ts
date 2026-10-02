@@ -39,7 +39,7 @@ const parse = (r: Awaited<ReturnType<typeof callTool>>) => JSON.parse(r.content[
 describe('tool list is pinned', () => {
   it('exposes exactly these tools: nothing that sends, approves, prices or deletes', () => {
     expect(TOOLS.map((t) => t.name).sort()).toEqual(
-      ['add_note', 'create_task', 'draft_follow_up', 'draft_proposal', 'get_lead', 'get_pipeline_summary', 'get_today', 'list_proposals', 'search_leads'].sort()
+      ['add_note', 'create_task', 'draft_follow_up', 'draft_proposal', 'get_content_themes', 'get_lead', 'get_pipeline_summary', 'get_today', 'list_proposals', 'search_leads'].sort()
     )
   })
   it('has no tool name or argument that could send, approve, price, close, delete or change consent', () => {
@@ -309,7 +309,7 @@ describe('POST /api/mcp', () => {
     const res = await handleMcp(rpc(a.token, LIST), a.fake.client)
     expect(res.status).toBe(200)
     const names = (await res.json()).result.tools.map((t: { name: string }) => t.name).sort()
-    expect(names).toEqual(['get_lead', 'get_pipeline_summary', 'get_today', 'list_proposals', 'search_leads'])
+    expect(names).toEqual(['get_content_themes', 'get_lead', 'get_pipeline_summary', 'get_today', 'list_proposals', 'search_leads'])
   })
   it('tools/list: an owner with both scopes sees the full pinned list', async () => {
     const a = endpointDb('owner', ['read', 'propose'])
