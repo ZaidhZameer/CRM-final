@@ -13,6 +13,38 @@ const MAX_BODY_BYTES = 100_000
 const json = (status: number, error: string, headers: Record<string, string> = {}) =>
   Response.json({ error }, { status, headers: { 'Cache-Control': 'no-store', ...headers } })
 
+async function readBodyCapped(request: Request, max: number): Promise<string | null> {
+  const reader = request.body?.getReader()
+  if (!reader) return ''
+  const chunks: Uint8Array[] = []
+  let total = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    total += value.byteLength
+    if (total > max) {
+      await reader.cancel().catch(() => undefined)
+      return null
+    }
+    chunks.push(value)
+  }
+  const buf = new Uint8Array(total)
+  let off = 0
+  for (const c of chunks) {
+    buf.set(c, off)
+    off += c.byteLength
+  }
+  return new TextDecoder().decode(buf)
+}
+
+/** The rebuilt request computes its own length; a stale or missing header must not carry over. */
+function stripLength(h: Headers): Headers {
+  const out = new Headers(h)
+  out.delete('content-length')
+  out.delete('transfer-encoding')
+  return out
+}
+
 function buildServer(ctx: McpContext) {
   const server = new McpServer({ name: 'flowlead', version: '1.0.0' }, { instructions: SERVER_INSTRUCTIONS })
   for (const t of allowedTools(ctx.auth)) {
@@ -43,14 +75,17 @@ export async function handleMcp(request: Request, service: SupabaseClient): Prom
   const rl = await RATE_LIMITS.mcp(auth.tokenId)
   if (!rl.success) return json(429, 'Too many requests', { 'Retry-After': String(rl.resetIn) })
 
-  const length = Number(request.headers.get('content-length') ?? 0)
-  if (length > MAX_BODY_BYTES) return json(413, 'Request too large')
+  // Read the body with a hard cap (works with or without Content-Length, HTTP/1 or HTTP/2, chunked
+  // or not), then hand the SDK a request with a bounded body.
+  const body = await readBodyCapped(request, MAX_BODY_BYTES)
+  if (body === null) return json(413, 'Request too large')
+  const bounded = new Request(request.url, { method: 'POST', headers: stripLength(request.headers), body })
 
   const server = buildServer({ service, auth })
   const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true })
   await server.connect(transport)
   try {
-    const res = await transport.handleRequest(request)
+    const res = await transport.handleRequest(bounded)
     res.headers.set('Cache-Control', 'no-store')
     return res
   } finally {

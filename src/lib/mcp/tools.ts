@@ -81,7 +81,10 @@ const getToday: ToolDef = {
   shape: {},
   async handler(ctx) {
     const brief = await buildTodayBrief(ctx.service, ctx.auth.orgId)
-    return { headline: todayHeadline(brief.counts), ...brief, untrusted_lead_content_note: UNTRUSTED_NOTE }
+    // Item titles and details are built from lead-supplied text (names, emails, company names),
+    // so every item list lives inside untrusted_lead_content; only counts and spend are outside.
+    const { counts, aiSpend, ...sections } = brief
+    return { headline: todayHeadline(counts), counts, ai_spend: aiSpend, untrusted_lead_content: sections, untrusted_lead_content_note: UNTRUSTED_NOTE }
   },
 }
 
@@ -172,8 +175,8 @@ const getLead: ToolDef = {
       last_contacted_at: j.last_contacted_at,
       next_follow_up_at: j.next_follow_up_at,
       open_follow_up: followUp.data ? { id: followUp.data.id, scheduled_for: followUp.data.scheduled_for, step: followUp.data.step } : null,
-      open_deal: deal.data ?? null,
-      proposals: proposals.data ?? [],
+      open_deal: deal.data ? (({ title, ...d }) => ({ ...d, untrusted_lead_content: { title: cap(title, 200) } }))(deal.data) : null,
+      proposals: (proposals.data ?? []).map(({ title, ...p }) => ({ ...p, untrusted_lead_content: { title: cap(title, 200) } })),
       outreach: {
         total: msgs.length,
         sent: sent.length,
@@ -217,7 +220,8 @@ const listProposals: ToolDef = {
       .limit(50)
     if (args.status) q = q.eq('status', args.status)
     const { data } = await q
-    return { proposals: (data ?? []).map((p) => ({ ...p, title: cap(p.title, 200) })) }
+    // A proposal title is "Proposal for <company name>", i.e. lead-supplied text.
+    return { proposals: (data ?? []).map(({ title, ...p }) => ({ ...p, untrusted_lead_content: { title: cap(title, 200) } })), untrusted_lead_content_note: UNTRUSTED_NOTE }
   },
 }
 
