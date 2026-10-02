@@ -11,6 +11,7 @@ import { MailboxSettings } from './mailbox-settings'
 import { ApiTokenSettings } from './api-token-settings'
 import { AgencyProfileSettings } from './agency-profile-settings'
 import { SourcingSettings } from './sourcing-settings'
+import { AgentsSettings } from './agents-settings'
 
 const ROLE_STYLES: Record<string, string> = {
   owner: 'bg-purple-50 text-purple-600 ring-purple-500/20 dark:bg-purple-950/40 dark:text-purple-400',
@@ -179,6 +180,9 @@ export default function SettingsPage() {
 
       {/* Lead sourcing (Companies House) */}
       <SourcingSettings />
+
+      {/* AI agents: autonomy and kill switch */}
+      <AgentsSettings />
 
       {/* Team Members */}
       <div className="rounded-xl border bg-card p-6 space-y-4">
