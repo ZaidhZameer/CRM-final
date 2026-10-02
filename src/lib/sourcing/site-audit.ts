@@ -530,3 +530,28 @@ export async function auditWebsite(rawUrl: string, opts: AuditOptions = {}): Pro
     return { ok: false, error: { kind: 'fetch_failed', message: 'Audit failed unexpectedly' } }
   }
 }
+
+/**
+ * Fetches one public page through the same SSRF guard as the audit (validated URL, DNS check,
+ * manual redirects re-validated, time and size caps). For contact discovery.
+ */
+export async function fetchPublicPage(
+  rawUrl: string,
+  opts: Pick<AuditOptions, 'fetch' | 'resolveHost' | 'timeoutMs' | 'maxBytes' | 'maxRedirects'> = {}
+): Promise<{ ok: true; html: string; finalUrl: URL } | { ok: false; error: AuditError }> {
+  try {
+    const v = validateAuditUrl(rawUrl)
+    if (!v.ok) return { ok: false, error: v.error }
+    const fetched = await fetchHtml(v.url, {
+      doFetch: opts.fetch ?? fetch,
+      resolve: opts.resolveHost ?? defaultResolve,
+      timeoutMs: opts.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+      maxBytes: opts.maxBytes ?? DEFAULT_MAX_BYTES,
+      maxRedirects: opts.maxRedirects ?? DEFAULT_MAX_REDIRECTS,
+    })
+    if (!fetched.ok) return { ok: false, error: fetched.error }
+    return { ok: true, html: fetched.data.html, finalUrl: fetched.data.finalUrl }
+  } catch {
+    return { ok: false, error: { kind: 'fetch_failed', message: 'Page could not be fetched' } }
+  }
+}
