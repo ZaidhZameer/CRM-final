@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { verifyCronSecret } from '@/lib/automation/secret'
 import { runReactivation } from '@/lib/reactivation'
+import { runSourcingForAllOrgs } from '@/lib/sourcing/run'
 
 // Cron: Runs daily. Finds leads with no activity for 7+ days and auto-creates follow-up tasks.
 // On the first business day of each quarter (UK), or with ?reactivate=1, it also schedules ONE
@@ -27,6 +28,12 @@ export async function GET(request: NextRequest) {
       return { ran: true, error: 'unexpected failure' }
     })
 
+  // Daily lead sourcing for orgs that switched it on (default OFF; creates leads only, sends nothing).
+  const sourcing = await runSourcingForAllOrgs(service).catch((err) => {
+    console.error('[cron/stale-leads] sourcing failed', err instanceof Error ? err.message : err)
+    return {}
+  })
+
   // Find all active leads where:
   // 1. Status is NOT converted/lost (still in play)
   // 2. updated_at is older than 7 days
@@ -46,7 +53,7 @@ export async function GET(request: NextRequest) {
     .limit(500)
 
   if (!staleLeads || staleLeads.length === 0) {
-    return NextResponse.json({ message: 'No stale leads found', created: 0, anonymised, reactivation })
+    return NextResponse.json({ message: 'No stale leads found', created: 0, anonymised, reactivation, sourcing })
   }
 
   let tasksCreated = 0
@@ -99,5 +106,6 @@ export async function GET(request: NextRequest) {
     created: tasksCreated,
     anonymised,
     reactivation,
+    sourcing,
   })
 }

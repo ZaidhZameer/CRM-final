@@ -10,6 +10,7 @@ import { BookingSettings } from './booking-settings'
 import { MailboxSettings } from './mailbox-settings'
 import { ApiTokenSettings } from './api-token-settings'
 import { AgencyProfileSettings } from './agency-profile-settings'
+import { SourcingSettings } from './sourcing-settings'
 
 const ROLE_STYLES: Record<string, string> = {
   owner: 'bg-purple-50 text-purple-600 ring-purple-500/20 dark:bg-purple-950/40 dark:text-purple-400',
@@ -175,6 +176,9 @@ export default function SettingsPage() {
 
       {/* Agency profile (feeds the AI proposal drafter) */}
       <AgencyProfileSettings />
+
+      {/* Lead sourcing (Companies House) */}
+      <SourcingSettings />
 
       {/* Team Members */}
       <div className="rounded-xl border bg-card p-6 space-y-4">
