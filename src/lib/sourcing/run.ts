@@ -140,7 +140,10 @@ async function createSourcedLead(service: SupabaseClient, orgId: string, campaig
 export async function runSourcingForAllOrgs(service: SupabaseClient, deps: SourcingDeps = {}) {
   const { data: orgs } = await service.from('sourcing_settings').select('organization_id').eq('enabled', true)
   const results: Record<string, SourcingSummary | { ran: false; reason: 'error' }> = {}
+  const { data: paused } = await service.from('agent_controls').select('organization_id').eq('agents_paused', true)
+  const pausedOrgs = new Set(((paused ?? []) as { organization_id: string }[]).map((r) => r.organization_id))
   for (const o of (orgs ?? []) as { organization_id: string }[]) {
+    if (pausedOrgs.has(o.organization_id)) continue // org-wide agent kill switch
     results[o.organization_id] = await runSourcingForOrg(service, o.organization_id, deps).catch((err) => {
       console.error('[sourcing] org run failed', o.organization_id, err instanceof Error ? err.message : err)
       return { ran: false as const, reason: 'error' as const }
