@@ -16,7 +16,7 @@ function getIP(request: NextRequest): string {
 // fail-closed shared-secret header instead. '/api/mcp' is the agent endpoint: no session cookie,
 // every request carries a personal access token (Authorization: Bearer flk_...) verified in the handler.
 const PUBLIC_ROUTES = [
-  '/sign-in', '/sign-up', '/auth/callback', '/auth/confirm', '/reset-password', '/f/', '/privacy', '/terms',
+  '/sign-in', '/sign-up', '/auth/callback', '/auth/confirm', '/reset-password', '/f/', '/audit/', '/privacy', '/terms',
   '/book/', '/api/automation/', '/api/cron/', '/api/mcp', '/p/',
 ]
 
@@ -50,7 +50,7 @@ export default async function proxy(request: NextRequest) {
   }
 
   // Rate limit public form pages (20/min per IP)
-  if (pathname.startsWith('/f/')) {
+  if (pathname.startsWith('/f/') || pathname.startsWith('/audit/')) {
     const rl = await RATE_LIMITS.form(ip)
     if (!rl.success) {
       return new NextResponse('Too many submissions. Please try again later.', {
